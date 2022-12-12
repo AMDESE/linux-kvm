@@ -1447,6 +1447,19 @@ void vfio_file_set_kvm(struct file *file, struct kvm *kvm)
 }
 EXPORT_SYMBOL_GPL(vfio_file_set_kvm);
 
+struct vfio_device *vfio_file_device(struct file *filep)
+{
+	struct vfio_device_file *df = filep->private_data;
+
+	if (filep->f_op != &vfio_device_fops)
+		return NULL;
+
+	get_device(&df->device->device);
+
+	return df->device;
+}
+EXPORT_SYMBOL_GPL(vfio_file_device);
+
 /*
  * Sub-module support
  */
