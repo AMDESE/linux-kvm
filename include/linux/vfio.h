@@ -293,6 +293,7 @@ int vfio_mig_get_next_state(struct vfio_device *device,
 
 void vfio_combine_iova_ranges(struct rb_root_cached *root, u32 cur_nodes,
 			      u32 req_nodes);
+struct vfio_device *vfio_file_device(struct file *file);
 
 /*
  * External user API
