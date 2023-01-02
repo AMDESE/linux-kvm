@@ -375,6 +375,7 @@
 #define X86_FEATURE_X2AVIC		(15*32+18) /* Virtual x2apic */
 #define X86_FEATURE_V_SPEC_CTRL		(15*32+20) /* Virtual SPEC_CTRL */
 #define X86_FEATURE_VNMI		(15*32+25) /* Virtual NMI */
+#define X86_FEATURE_VIBS		(15*32+26) /* "" Virtual IBS */
 #define X86_FEATURE_EXTLVT		(15*32+27) /* "" Extended Local vector Table */
 #define X86_FEATURE_SVME_ADDR_CHK	(15*32+28) /* "" SVME addr check */
 
