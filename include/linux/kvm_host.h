@@ -1023,6 +1023,7 @@ void kvm_get_kvm(struct kvm *kvm);
 bool kvm_get_kvm_safe(struct kvm *kvm);
 void kvm_put_kvm(struct kvm *kvm);
 bool file_is_kvm(struct file *file);
+struct kvm *kvm_from_file(struct file *file);
 void kvm_put_kvm_no_destroy(struct kvm *kvm);
 
 static inline struct kvm_memslots *__kvm_memslots(struct kvm *kvm, int as_id)
@@ -1294,6 +1295,7 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 
 int kvm_clear_guest(struct kvm *kvm, gpa_t gpa, unsigned long len);
 struct kvm_memory_slot *gfn_to_memslot(struct kvm *kvm, gfn_t gfn);
+struct kvm_memory_slot *uptr_to_memslot(struct kvm *kvm, void __user *uptr);
 bool kvm_is_visible_gfn(struct kvm *kvm, gfn_t gfn);
 bool kvm_vcpu_is_visible_gfn(struct kvm_vcpu *vcpu, gfn_t gfn);
 unsigned long kvm_host_page_size(struct kvm_vcpu *vcpu, gfn_t gfn);
@@ -1712,6 +1714,22 @@ try_get_memslot(struct kvm_memory_slot *slot, gfn_t gfn)
 		return NULL;
 }
 
+static inline struct kvm_memory_slot *
+try_get_memslot_uptr(struct kvm_memory_slot *slot, void __user *uptr)
+{
+	unsigned long base_upn;
+	unsigned long upn = (unsigned long) uptr >> PAGE_SHIFT;
+
+	if (!slot)
+		return NULL;
+
+	base_upn = slot->userspace_addr >> PAGE_SHIFT;
+	if (upn >= base_upn && upn < base_upn + slot->npages)
+		return slot;
+	else
+		return NULL;
+}
+
 /*
  * Returns a pointer to the memslot that contains gfn. Otherwise returns NULL.
  *
@@ -1741,6 +1759,22 @@ search_memslots(struct kvm_memslots *slots, gfn_t gfn, bool approx)
 }
 
 static inline struct kvm_memory_slot *
+search_memslots_uptr(struct kvm_memslots *slots, void __user *uptr)
+{
+	unsigned long upn = (unsigned long) uptr >> PAGE_SHIFT;
+	struct kvm_memslot_iter iter;
+
+	kvm_for_each_memslot_in_gfn_range(&iter, slots, 0, 512ULL * SZ_1T) {
+		struct kvm_memory_slot *slot = iter.slot;
+		unsigned long base_upn = slot->userspace_addr >> PAGE_SHIFT;
+
+		if (upn >= base_upn && upn < base_upn + slot->npages)
+			return slot;
+	}
+	return NULL;
+}
+
+static inline struct kvm_memory_slot *
 ____gfn_to_memslot(struct kvm_memslots *slots, gfn_t gfn, bool approx)
 {
 	struct kvm_memory_slot *slot;
@@ -1759,6 +1793,25 @@ ____gfn_to_memslot(struct kvm_memslots *slots, gfn_t gfn, bool approx)
 	return NULL;
 }
 
+static inline struct kvm_memory_slot *
+____uptr_to_memslot(struct kvm_memslots *slots, void __user *uptr)
+{
+	struct kvm_memory_slot *slot;
+
+	slot = (struct kvm_memory_slot *)atomic_long_read(&slots->last_used_slot);
+	slot = try_get_memslot_uptr(slot, uptr);
+	if (slot)
+		return slot;
+
+	slot = search_memslots_uptr(slots, uptr);
+	if (slot) {
+		atomic_long_set(&slots->last_used_slot, (unsigned long)slot);
+		return slot;
+	}
+
+	return NULL;
+}
+
 /*
  * __gfn_to_memslot() and its descendants are here to allow arch code to inline
  * the lookups in hot paths.  gfn_to_memslot() itself isn't here as an inline
@@ -1768,6 +1821,12 @@ static inline struct kvm_memory_slot *
 __gfn_to_memslot(struct kvm_memslots *slots, gfn_t gfn)
 {
 	return ____gfn_to_memslot(slots, gfn, false);
+}
+
+static inline struct kvm_memory_slot *
+__uptr_to_memslot(struct kvm_memslots *slots, void __user *uptr)
+{
+	return ____uptr_to_memslot(slots, uptr);
 }
 
 static inline unsigned long
@@ -2437,6 +2496,7 @@ static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 
 #ifdef CONFIG_KVM_PRIVATE_MEM
+int kvm_gmem_uptr_to_pfn(struct kvm *kvm, void __user *uptr, gfn_t *gfn, kvm_pfn_t *pfn, int *max_order);
 int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order);
 #else

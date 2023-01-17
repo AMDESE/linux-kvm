@@ -279,6 +279,7 @@ struct iommu_ioas_unmap {
 enum iommufd_option {
 	IOMMU_OPTION_RLIMIT_MODE = 0,
 	IOMMU_OPTION_HUGE_PAGES = 1,
+	IOMMU_OPTION_KVM = 2,
 };
 
 /**

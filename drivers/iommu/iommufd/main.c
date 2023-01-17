@@ -17,6 +17,7 @@
 #include <linux/bug.h>
 #include <uapi/linux/iommufd.h>
 #include <linux/iommufd.h>
+#include <linux/kvm_host.h>
 
 #include "io_pagetable.h"
 #include "iommufd_private.h"
@@ -287,8 +288,43 @@ static int iommufd_fops_release(struct inode *inode, struct file *filp)
 			break;
 	}
 	WARN_ON(!xa_empty(&ictx->groups));
+	if (ictx->kvm) {
+		while (ictx->kvm_counter) {
+			kvm_put_kvm(ictx->kvm);
+			--ictx->kvm_counter;
+		}
+	}
 	kfree(ictx);
 	return 0;
+}
+
+static int iommufd_kvm(struct iommu_option *cmd, struct iommufd_ctx *ictx)
+{
+	int kvmfd = cmd->val64;
+	struct file *f = fget(kvmfd);
+	int rc = 0;
+
+	if (!f)
+		return -EINVAL;
+
+	if (ictx->kvm) {
+		if (!kvm_get_kvm_safe(ictx->kvm))
+			rc = -EFAULT;
+		else
+			++ictx->kvm_counter;
+	} else {
+		ictx->kvm = kvm_from_file(f);
+		if (!ictx->kvm) {
+			rc = -EFAULT;
+		} else {
+			WARN_ON(ictx->kvm_counter);
+			ictx->kvm_counter = 1;
+		}
+	}
+
+	fput(f);
+
+	return rc;
 }
 
 static int iommufd_option(struct iommufd_ucmd *ucmd)
@@ -305,6 +341,9 @@ static int iommufd_option(struct iommufd_ucmd *ucmd)
 		break;
 	case IOMMU_OPTION_HUGE_PAGES:
 		rc = iommufd_ioas_option(ucmd);
+		break;
+	case IOMMU_OPTION_KVM:
+		rc = iommufd_kvm(cmd, ucmd->ictx);
 		break;
 	default:
 		return -EOPNOTSUPP;

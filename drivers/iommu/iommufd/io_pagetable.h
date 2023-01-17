@@ -204,6 +204,8 @@ struct iopt_pages {
 	struct rb_root_cached access_itree;
 	/* Of iopt_area::pages_node */
 	struct rb_root_cached domains_itree;
+
+	struct kvm *kvm;
 };
 
 struct iopt_pages *iopt_alloc_pages(void __user *uptr, unsigned long length,

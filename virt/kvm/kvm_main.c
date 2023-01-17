@@ -2607,6 +2607,12 @@ struct kvm_memory_slot *gfn_to_memslot(struct kvm *kvm, gfn_t gfn)
 }
 EXPORT_SYMBOL_GPL(gfn_to_memslot);
 
+struct kvm_memory_slot *uptr_to_memslot(struct kvm *kvm, void __user *uptr)
+{
+	return __uptr_to_memslot(kvm_memslots(kvm), uptr);
+}
+EXPORT_SYMBOL_GPL(uptr_to_memslot);
+
 struct kvm_memory_slot *kvm_vcpu_gfn_to_memslot(struct kvm_vcpu *vcpu, gfn_t gfn)
 {
 	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
@@ -5479,6 +5485,21 @@ bool file_is_kvm(struct file *file)
 	return file && file->f_op == &kvm_vm_fops;
 }
 EXPORT_SYMBOL_GPL(file_is_kvm);
+
+struct kvm *kvm_from_file(struct file *file)
+{
+	struct kvm *kvm;
+
+	if (file->f_op != &kvm_vm_fops)
+		return NULL;
+
+	kvm = file->private_data;
+	if (!kvm_get_kvm_safe(kvm))
+		return NULL;
+
+	return kvm;
+}
+EXPORT_SYMBOL_GPL(kvm_from_file);
 
 static int kvm_dev_ioctl_create_vm(unsigned long type)
 {

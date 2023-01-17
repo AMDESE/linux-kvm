@@ -412,6 +412,7 @@ int iopt_map_user_pages(struct iommufd_ctx *ictx, struct io_pagetable *iopt,
 		elm.pages->account_mode = IOPT_PAGES_ACCOUNT_MM;
 	elm.start_byte = uptr - elm.pages->uptr;
 	elm.length = length;
+	elm.pages->kvm = ictx->kvm;
 	list_add(&elm.next, &pages_list);
 
 	rc = iopt_map_pages(iopt, &pages_list, length, iova, iommu_prot, flags);

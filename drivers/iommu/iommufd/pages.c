@@ -52,6 +52,8 @@
 #include <linux/highmem.h>
 #include <linux/kthread.h>
 #include <linux/iommufd.h>
+#include <linux/kvm_host.h>
+#include <linux/pagemap.h>
 
 #include "io_pagetable.h"
 #include "double_span.h"
@@ -622,6 +624,31 @@ static void batch_from_pages(struct pfn_batch *batch, struct page **pages,
 			break;
 }
 
+static void memfd_unpin_user_page_range_dirty_lock(struct page *page, unsigned long npages,
+				      bool make_dirty)
+{
+	unsigned long i, nr;
+
+	for (i = 0; i < npages; i += nr) {
+		struct page *next = nth_page(page, i);
+		struct folio *folio = page_folio(next);
+
+		if (folio_test_large(folio))
+			nr = min_t(unsigned int, npages - i,
+				   folio_nr_pages(folio) - folio_page_idx(folio, next));
+		else
+			nr = 1;
+
+		if (make_dirty && !folio_test_dirty(folio)) {
+			// FIXME: do we need this? private memory does not swap
+			folio_lock(folio);
+			folio_mark_dirty(folio);
+			folio_unlock(folio);
+		}
+		folio_put(folio);
+	}
+}
+
 static void batch_unpin(struct pfn_batch *batch, struct iopt_pages *pages,
 			unsigned int first_page_off, size_t npages)
 {
@@ -638,9 +665,14 @@ static void batch_unpin(struct pfn_batch *batch, struct iopt_pages *pages,
 		size_t to_unpin = min_t(size_t, npages,
 					batch->npfns[cur] - first_page_off);
 
-		unpin_user_page_range_dirty_lock(
-			pfn_to_page(batch->pfns[cur] + first_page_off),
-			to_unpin, pages->writable);
+		if (pages->kvm)
+			memfd_unpin_user_page_range_dirty_lock(
+				pfn_to_page(batch->pfns[cur] + first_page_off),
+				to_unpin, pages->writable);
+		else
+			unpin_user_page_range_dirty_lock(
+				pfn_to_page(batch->pfns[cur] + first_page_off),
+				to_unpin, pages->writable);
 		iopt_pages_sub_npinned(pages, to_unpin);
 		cur++;
 		first_page_off = 0;
@@ -777,17 +809,47 @@ static int pfn_reader_user_pin(struct pfn_reader_user *user,
 		return -EFAULT;
 
 	uptr = (uintptr_t)(pages->uptr + start_index * PAGE_SIZE);
-	if (!remote_mm)
-		rc = pin_user_pages_fast(uptr, npages, user->gup_flags,
-					 user->upages);
-	else {
-		if (!user->locked) {
-			mmap_read_lock(pages->source_mm);
-			user->locked = 1;
+
+	if (pages->kvm) {
+		rc = 0;
+		for (unsigned long i = 0; i < npages; ++i, uptr += PAGE_SIZE) {
+			gfn_t gfn = 0;
+			kvm_pfn_t pfn = 0;
+			int max_order = 0, rc1;
+
+			rc1 = kvm_gmem_uptr_to_pfn(pages->kvm, (void *) uptr, &gfn, &pfn, &max_order);
+			if (rc1 == -EINVAL && i == 0) {
+				pr_err_once("Must be vfio mmio at gfn=%llx pfn=%llx, skipping\n",
+					    gfn, pfn);
+				goto the_usual;
+			}
+
+			if (rc1) {
+				pr_err("%s: %d %ld %lx -> %lx\n", __func__,
+				       rc1, i, (unsigned long) uptr, (unsigned long) pfn);
+				rc = rc1;
+				break;
+			}
+
+			user->upages[i] = pfn_to_page(pfn);
 		}
-		rc = pin_user_pages_remote(pages->source_mm, uptr, npages,
-					   user->gup_flags, user->upages,
-					   &user->locked);
+
+		if (!rc)
+			rc = npages;
+	} else {
+the_usual:
+		if (!remote_mm) {
+			rc = pin_user_pages_fast(uptr, npages, user->gup_flags,
+						 user->upages);
+		} else {
+			if (!user->locked) {
+				mmap_read_lock(pages->source_mm);
+				user->locked = 1;
+			}
+			rc = pin_user_pages_remote(pages->source_mm, uptr, npages,
+						   user->gup_flags, user->upages,
+						   &user->locked);
+		}
 	}
 	if (rc <= 0) {
 		if (WARN_ON(!rc))
