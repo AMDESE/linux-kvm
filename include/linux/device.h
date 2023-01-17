@@ -45,6 +45,7 @@ struct fwnode_handle;
 struct iommu_group;
 struct dev_pin_info;
 struct dev_iommu;
+struct tsm_tdi;
 struct msi_device_data;
 
 /**
@@ -801,6 +802,7 @@ struct device {
 	void	(*release)(struct device *dev);
 	struct iommu_group	*iommu_group;
 	struct dev_iommu	*iommu;
+	struct tsm_tdi		*tdi;
 
 	struct device_physical_location *physical_location;
 
@@ -821,6 +823,9 @@ struct device {
 #endif
 #ifdef CONFIG_DMA_NEED_SYNC
 	bool			dma_skip_sync:1;
+#endif
+#if defined(CONFIG_TSM) || defined(CONFIG_TSM_MODULE)
+	bool			tdi_enabled : 1;
 #endif
 };
 

@@ -7,6 +7,16 @@ config TSM_REPORTS
 	select CONFIGFS_FS
 	tristate
 
+config TSM
+	tristate "Platform support for TEE Device Interface Security Protocol (TDISP)"
+	default m
+	depends on AMD_MEM_ENCRYPT
+	select PCI_DOE
+	select PCI_IDE
+	help
+	  TEE Device Interface Security Protocol (TDISP) from PCI-SIG,
+	  https://pcisig.com/tee-device-interface-security-protocol-tdisp
+
 source "drivers/virt/coco/efi_secret/Kconfig"
 
 source "drivers/virt/coco/sev-guest/Kconfig"
