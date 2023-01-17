@@ -659,6 +659,46 @@ __kvm_gmem_get_pfn(struct file *file, struct kvm_memory_slot *slot,
 	return folio;
 }
 
+int kvm_gmem_uptr_to_pfn(struct kvm *kvm, void __user *uptr, gfn_t *gfn,
+			 kvm_pfn_t *pfn, int *max_order)
+{
+	struct kvm_memory_slot *slot = __uptr_to_memslot(kvm_memslots(kvm),
+							 uptr);
+	bool is_prepared = false;
+	unsigned long upn_off;
+	struct folio *folio;
+	struct file *file;
+	int r;
+
+	if (!slot)
+		return -EFAULT;
+
+	file = kvm_gmem_get_file(slot);
+	if (!file)
+		return -EFAULT;
+
+	upn_off = ((unsigned long) uptr - slot->userspace_addr) >> PAGE_SHIFT;
+	*gfn = slot->base_gfn + upn_off;
+
+	folio = __kvm_gmem_get_pfn(file, slot, *gfn, pfn, &is_prepared, max_order, true);
+	if (IS_ERR(folio)) {
+		r = PTR_ERR(folio);
+		goto out;
+	}
+
+	if (!is_prepared)
+		r = kvm_gmem_prepare_folio(kvm, slot, *gfn, folio);
+
+	folio_unlock(folio);
+	if (r < 0)
+		folio_put(folio);
+
+out:
+	fput(file);
+	return r;
+}
+EXPORT_SYMBOL_GPL(kvm_gmem_uptr_to_pfn);
+
 int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order)
 {

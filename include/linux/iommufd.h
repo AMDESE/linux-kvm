@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/err.h>
+#include <linux/kvm_types.h>
 
 struct device;
 struct iommufd_device;
@@ -57,6 +58,11 @@ void iommufd_ctx_get(struct iommufd_ctx *ictx);
 #if IS_ENABLED(CONFIG_IOMMUFD)
 struct iommufd_ctx *iommufd_ctx_from_file(struct file *file);
 struct iommufd_ctx *iommufd_ctx_from_fd(int fd);
+bool iommufd_file_is_valid(struct file *file);
+typedef int (*gmem_pin_t)(struct kvm *kvm, void __user *uptr, gfn_t *gfn,
+			  kvm_pfn_t *pfn, int *max_order);
+void iommufd_file_set_kvm(struct file *file, struct kvm *kvm,
+			  gmem_pin_t gmem_pin);
 void iommufd_ctx_put(struct iommufd_ctx *ictx);
 bool iommufd_ctx_has_group(struct iommufd_ctx *ictx, struct iommu_group *group);
 

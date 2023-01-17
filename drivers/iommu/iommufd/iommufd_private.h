@@ -10,6 +10,7 @@
 #include <linux/uaccess.h>
 #include <linux/iommu.h>
 #include <linux/iova_bitmap.h>
+#include <linux/iommufd.h>
 #include <uapi/linux/iommufd.h>
 #include "../iommu-priv.h"
 
@@ -28,6 +29,9 @@ struct iommufd_ctx {
 	/* Compatibility with VFIO no iommu */
 	u8 no_iommu_mode;
 	struct iommufd_ioas *vfio_ioas;
+
+	struct kvm *kvm;
+	gmem_pin_t gmem_pin;
 };
 
 /*

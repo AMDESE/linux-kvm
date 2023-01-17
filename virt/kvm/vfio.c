@@ -16,6 +16,7 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/tsm.h>
+#include <linux/iommufd.h>
 #include "vfio.h"
 
 #ifdef CONFIG_SPAPR_TCE_IOMMU
@@ -25,6 +26,7 @@
 struct kvm_vfio_file {
 	struct list_head node;
 	struct file *file;
+	bool is_iommufd;
 #ifdef CONFIG_SPAPR_TCE_IOMMU
 	struct iommu_group *iommu_group;
 #endif
@@ -85,6 +87,36 @@ static bool kvm_vfio_file_is_valid(struct file *file)
 	symbol_put(vfio_file_is_valid);
 
 	return ret;
+}
+
+static bool kvm_iommufd_file_is_valid(struct file *file)
+{
+	bool (*fn)(struct file *file);
+	bool ret;
+
+	fn = symbol_get(iommufd_file_is_valid);
+	if (!fn)
+		return false;
+
+	ret = fn(file);
+
+	symbol_put(iommufd_file_is_valid);
+
+	return ret;
+}
+
+static void kvm_iommufd_file_set_kvm(struct file *file, struct kvm *kvm,
+				     gmem_pin_t gmem_pin)
+{
+	void (*fn)(struct file *file, struct kvm *kvm, gmem_pin_t gmem_pin);
+
+	fn = symbol_get(iommufd_file_set_kvm);
+	if (!fn)
+		return;
+
+	fn(file, kvm, gmem_pin);
+
+	symbol_put(iommufd_file_set_kvm);
 }
 
 static struct vfio_device *kvm_vfio_file_device(struct file *file)
@@ -167,7 +199,7 @@ static int kvm_vfio_file_add(struct kvm_device *dev, unsigned int fd)
 {
 	struct kvm_vfio *kv = dev->private;
 	struct kvm_vfio_file *kvf;
-	struct file *filp;
+	struct file *filp = NULL;
 	int ret = 0;
 
 	filp = fget(fd);
@@ -175,7 +207,7 @@ static int kvm_vfio_file_add(struct kvm_device *dev, unsigned int fd)
 		return -EBADF;
 
 	/* Ensure the FD is a vfio FD. */
-	if (!kvm_vfio_file_is_valid(filp)) {
+	if (!kvm_vfio_file_is_valid(filp) && !kvm_iommufd_file_is_valid(filp)) {
 		ret = -EINVAL;
 		goto out_fput;
 	}
@@ -196,11 +228,18 @@ static int kvm_vfio_file_add(struct kvm_device *dev, unsigned int fd)
 	}
 
 	kvf->file = get_file(filp);
+
 	list_add_tail(&kvf->node, &kv->file_list);
 
 	kvm_arch_start_assignment(dev->kvm);
-	kvm_vfio_file_set_kvm(kvf->file, dev->kvm);
-	kvm_vfio_update_coherency(dev);
+	kvf->is_iommufd = kvm_iommufd_file_is_valid(filp);
+
+	if (kvf->is_iommufd) {
+		kvm_iommufd_file_set_kvm(kvf->file, dev->kvm, kvm_gmem_uptr_to_pfn);
+	} else {
+		kvm_vfio_file_set_kvm(kvf->file, dev->kvm);
+		kvm_vfio_update_coherency(dev);
+	}
 
 out_unlock:
 	mutex_unlock(&kv->lock);
@@ -233,7 +272,11 @@ static int kvm_vfio_file_del(struct kvm_device *dev, unsigned int fd)
 #ifdef CONFIG_SPAPR_TCE_IOMMU
 		kvm_spapr_tce_release_vfio_group(dev->kvm, kvf);
 #endif
-		kvm_vfio_file_set_kvm(kvf->file, NULL);
+		if (kvf->is_iommufd)
+			kvm_iommufd_file_set_kvm(kvf->file, NULL, NULL);
+		else
+			kvm_vfio_file_set_kvm(kvf->file, NULL);
+
 		fput(kvf->file);
 		kfree(kvf);
 		ret = 0;
@@ -476,7 +519,10 @@ static void kvm_vfio_release(struct kvm_device *dev)
 #ifdef CONFIG_SPAPR_TCE_IOMMU
 		kvm_spapr_tce_release_vfio_group(dev->kvm, kvf);
 #endif
-		kvm_vfio_file_set_kvm(kvf->file, NULL);
+		if (kvf->is_iommufd)
+			kvm_iommufd_file_set_kvm(kvf->file, NULL, NULL);
+		else
+			kvm_vfio_file_set_kvm(kvf->file, NULL);
 		fput(kvf->file);
 		list_del(&kvf->node);
 		kfree(kvf);

@@ -17,6 +17,7 @@
 #include <linux/bug.h>
 #include <uapi/linux/iommufd.h>
 #include <linux/iommufd.h>
+#include <linux/kvm_host.h>
 
 #include "io_pagetable.h"
 #include "iommufd_private.h"
@@ -487,6 +488,26 @@ struct iommufd_ctx *iommufd_ctx_from_fd(int fd)
 	return file->private_data;
 }
 EXPORT_SYMBOL_NS_GPL(iommufd_ctx_from_fd, IOMMUFD);
+
+bool iommufd_file_is_valid(struct file *file)
+{
+	return file->f_op == &iommufd_fops;
+}
+EXPORT_SYMBOL_NS_GPL(iommufd_file_is_valid, IOMMUFD);
+
+void iommufd_file_set_kvm(struct file *file, struct kvm *kvm, gmem_pin_t gmem_pin)
+{
+	struct iommufd_ctx *ictx = iommufd_ctx_from_file(file);
+
+	if (WARN_ON(!ictx))
+		return;
+
+	ictx->kvm = kvm;
+	ictx->gmem_pin = gmem_pin;
+
+	iommufd_ctx_put(ictx);
+}
+EXPORT_SYMBOL_NS_GPL(iommufd_file_set_kvm, IOMMUFD);
 
 /**
  * iommufd_ctx_put - Put back a reference
