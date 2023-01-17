@@ -65,4 +65,6 @@ void sev_dev_destroy(struct psp_device *psp);
 void sev_pci_init(void);
 void sev_pci_exit(void);
 
+bool sev_version_greater_or_equal(u8 maj, u8 min);
+
 #endif /* __SEV_DEV_H */
