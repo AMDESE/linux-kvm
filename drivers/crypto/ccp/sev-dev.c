@@ -54,7 +54,7 @@
 /* Leave room in the descriptor array for an end-of-list indicator. */
 #define CMD_BUF_DESC_MAX (CMD_BUF_FW_WRITABLE_MAX + 1)
 
-static DEFINE_MUTEX(sev_cmd_mutex);
+DEFINE_MUTEX(sev_cmd_mutex);
 static struct sev_misc_dev *misc_dev;
 
 static int psp_cmd_timeout = 100;
@@ -109,7 +109,7 @@ static void *sev_init_ex_buffer;
  */
 static struct sev_data_range_list *snp_range_list;
 
-static inline bool sev_version_greater_or_equal(u8 maj, u8 min)
+bool sev_version_greater_or_equal(u8 maj, u8 min)
 {
 	struct sev_device *sev = psp_master->sev_data;
 
@@ -363,9 +363,7 @@ static int sev_write_init_ex_file_if_required(int cmd_id)
  * snp_reclaim_pages() needs __sev_do_cmd_locked(), and __sev_do_cmd_locked()
  * needs snp_reclaim_pages(), so a forward declaration is needed.
  */
-static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret);
-
-static int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked)
+int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked)
 {
 	int ret, err, i;
 
@@ -829,7 +827,7 @@ static int snp_reclaim_cmd_buf(int cmd, void *cmd_buf)
 	return 0;
 }
 
-static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
+int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
 {
 	struct cmd_buf_desc desc_list[CMD_BUF_DESC_MAX] = {0};
 	struct psp_device *psp = psp_master;
@@ -2136,7 +2134,7 @@ out:
 	return ret;
 }
 
-static const struct file_operations sev_fops = {
+const struct file_operations sev_fops = {
 	.owner	= THIS_MODULE,
 	.unlocked_ioctl = sev_ioctl,
 };
