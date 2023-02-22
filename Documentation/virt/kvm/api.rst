@@ -2000,6 +2000,18 @@ error.
 Reads the Local APIC registers and copies them into the input argument.  The
 data format and layout are the same as documented in the architecture manual.
 
+::
+
+  #define KVM_APIC_EXT_REG_SIZE 0x540
+  struct kvm_lapic_state_w_extapic {
+	__DECLARE_FLEX_ARRAY(__u8, regs);
+  };
+
+Applications should use KVM_GET_LAPIC_W_EXTAPIC ioctl if extended APIC is
+enabled. KVM_GET_LAPIC_W_EXTAPIC reads Local APIC registers with extended
+APIC register space located at offsets 500h-530h and copies them into input
+argument.
+
 If KVM_X2APIC_API_USE_32BIT_IDS feature of KVM_CAP_X2APIC_API is
 enabled, then the format of APIC_ID register depends on the APIC mode
 (reported by MSR_IA32_APICBASE) of its VCPU.  x2APIC stores APIC ID in
@@ -2030,6 +2042,17 @@ always uses xAPIC format.
 
 Copies the input argument into the Local APIC registers.  The data format
 and layout are the same as documented in the architecture manual.
+
+::
+
+  #define KVM_APIC_EXT_REG_SIZE 0x540
+  struct kvm_lapic_state_w_extapic {
+	__DECLARE_FLEX_ARRAY(__u8, regs);
+  };
+
+Applications should use KVM_SET_LAPIC_W_EXTAPIC ioctl if extended APIC is enabled.
+KVM_SET_LAPIC_W_EXTAPIC copies input arguments with extended APIC register into
+Local APIC and extended APIC registers.
 
 The format of the APIC ID register (bytes 32-35 of struct kvm_lapic_state's
 regs field) depends on the state of the KVM_CAP_X2APIC_API capability.
