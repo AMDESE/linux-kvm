@@ -123,6 +123,11 @@ struct kvm_lapic_state {
 	char regs[KVM_APIC_REG_SIZE];
 };
 
+#define KVM_APIC_EXT_REG_SIZE 0x540
+struct kvm_lapic_state_w_extapic {
+	__DECLARE_FLEX_ARRAY(__u8, regs);
+};
+
 struct kvm_segment {
 	__u64 base;
 	__u32 limit;

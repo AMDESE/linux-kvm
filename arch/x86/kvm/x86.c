@@ -5038,19 +5038,19 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 }
 
 static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
-				    struct kvm_lapic_state *s)
+				    struct kvm_lapic_state_w_extapic *s, unsigned int size)
 {
 	static_call_cond(kvm_x86_sync_pir_to_irr)(vcpu);
 
-	return kvm_apic_get_state(vcpu, s);
+	return kvm_apic_get_state(vcpu, s, size);
 }
 
 static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu,
-				    struct kvm_lapic_state *s)
+				    struct kvm_lapic_state_w_extapic *s, unsigned int size)
 {
 	int r;
 
-	r = kvm_apic_set_state(vcpu, s);
+	r = kvm_apic_set_state(vcpu, s, size);
 	if (r)
 		return r;
 	update_cr8_intercept(vcpu);
@@ -5758,10 +5758,11 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 {
 	struct kvm_vcpu *vcpu = filp->private_data;
 	void __user *argp = (void __user *)arg;
+	unsigned long size;
 	int r;
 	union {
 		struct kvm_sregs2 *sregs2;
-		struct kvm_lapic_state *lapic;
+		struct kvm_lapic_state_w_extapic *lapic;
 		struct kvm_xsave *xsave;
 		struct kvm_xcrs *xcrs;
 		void *buffer;
@@ -5771,36 +5772,51 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 
 	u.buffer = NULL;
 	switch (ioctl) {
+	case KVM_GET_LAPIC_W_EXTAPIC:
 	case KVM_GET_LAPIC: {
 		r = -EINVAL;
 		if (!lapic_in_kernel(vcpu))
 			goto out;
-		u.lapic = kzalloc(sizeof(struct kvm_lapic_state),
-				GFP_KERNEL_ACCOUNT);
+
+		if (ioctl == KVM_GET_LAPIC_W_EXTAPIC)
+			size = struct_size(u.lapic, regs, KVM_APIC_EXT_REG_SIZE);
+		else
+			size = sizeof(struct kvm_lapic_state);
+
+		u.lapic = kzalloc(size, GFP_KERNEL_ACCOUNT);
 
 		r = -ENOMEM;
 		if (!u.lapic)
 			goto out;
-		r = kvm_vcpu_ioctl_get_lapic(vcpu, u.lapic);
+		r = kvm_vcpu_ioctl_get_lapic(vcpu, u.lapic, size);
 		if (r)
 			goto out;
+
 		r = -EFAULT;
-		if (copy_to_user(argp, u.lapic, sizeof(struct kvm_lapic_state)))
+		if (copy_to_user(argp, u.lapic, size))
 			goto out;
+
 		r = 0;
 		break;
 	}
+	case KVM_SET_LAPIC_W_EXTAPIC:
 	case KVM_SET_LAPIC: {
 		r = -EINVAL;
 		if (!lapic_in_kernel(vcpu))
 			goto out;
-		u.lapic = memdup_user(argp, sizeof(*u.lapic));
+
+		if (ioctl == KVM_SET_LAPIC_W_EXTAPIC)
+			size = struct_size(u.lapic, regs, KVM_APIC_EXT_REG_SIZE);
+		else
+			size = sizeof(struct kvm_lapic_state);
+		u.lapic = memdup_user(argp, size);
+
 		if (IS_ERR(u.lapic)) {
 			r = PTR_ERR(u.lapic);
 			goto out_nofree;
 		}
 
-		r = kvm_vcpu_ioctl_set_lapic(vcpu, u.lapic);
+		r = kvm_vcpu_ioctl_set_lapic(vcpu, u.lapic, size);
 		break;
 	}
 	case KVM_INTERRUPT: {
