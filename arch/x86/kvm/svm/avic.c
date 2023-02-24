@@ -682,6 +682,10 @@ static bool is_avic_unaccelerated_access_trap(u32 offset)
 	case APIC_LVTERR:
 	case APIC_TMICT:
 	case APIC_TDCR:
+	case APIC_EILVTn(0):
+	case APIC_EILVTn(1):
+	case APIC_EILVTn(2):
+	case APIC_EILVTn(3):
 		ret = true;
 		break;
 	default:

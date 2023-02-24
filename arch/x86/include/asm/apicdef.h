@@ -139,6 +139,22 @@
 #define		APIC_EILVT_MSG_EXT	0x7
 #define		APIC_EILVT_MASKED	(1 << 16)
 
+/*
+ * Initialize extended APIC registers to the default value when guest is started
+ * and EXTAPIC feature is enabled on the guest.
+ *
+ * APIC_EFEAT is a read only Extended APIC feature register, whose default value
+ * is 0x00040007. But Bit 0/1/2 indicate other features, which are not emulated
+ * by KVM, so they can not be set to 1s at the time of initialization and reset,
+ * right now default value set for APIC_EFEAT_DEFAULT is 0x00040000.
+ *
+ * APIC_ECTRL is a read-write Extended APIC control register, whose default value
+ * is 0x0.
+ */
+
+#define		APIC_EFEAT_DEFAULT	0x00040000
+#define		APIC_ECTRL_DEFAULT	0x0
+
 #define APIC_BASE (fix_to_virt(FIX_APIC_BASE))
 #define APIC_BASE_MSR		0x800
 #define APIC_X2APIC_ID_MSR	0x802

@@ -1599,8 +1599,12 @@ static inline struct kvm_lapic *to_lapic(struct kvm_io_device *dev)
 }
 
 #define APIC_REG_MASK(reg)	(1ull << ((reg) >> 4))
+#define APIC_REG_EXT_MASK(reg)	(1ull << (((reg) >> 4) - 0x40))
 #define APIC_REGS_MASK(first, count) \
 	(APIC_REG_MASK(first) * ((1ull << (count)) - 1))
+
+#define APIC_LAST_REG_OFFSET		0x3f0
+#define APIC_EXT_LAST_REG_OFFSET	0x530
 
 u64 kvm_lapic_readable_reg_mask(struct kvm_lapic *apic)
 {
@@ -1643,6 +1647,8 @@ EXPORT_SYMBOL_GPL(kvm_lapic_readable_reg_mask);
 static int kvm_lapic_reg_read(struct kvm_lapic *apic, u32 offset, int len,
 			      void *data)
 {
+	u64 valid_reg_ext_mask = 0;
+	unsigned int last_reg = APIC_LAST_REG_OFFSET;
 	unsigned char alignment = offset & 0xf;
 	u32 result;
 
@@ -1652,12 +1658,43 @@ static int kvm_lapic_reg_read(struct kvm_lapic *apic, u32 offset, int len,
 	 */
 	WARN_ON_ONCE(apic_x2apic_mode(apic) && offset == APIC_ICR);
 
+	/*
+	 * The local interrupts are extended to include LVT registers to allow
+	 * additional interrupt sources when the EXTAPIC feature bit is enabled.
+	 * The Extended Interrupt LVT registers are located at APIC offsets 400-530h.
+	 */
+	if (guest_cpuid_has(apic->vcpu, X86_FEATURE_EXTAPIC)) {
+		valid_reg_ext_mask =
+			APIC_REG_EXT_MASK(APIC_EFEAT) |
+			APIC_REG_EXT_MASK(APIC_ECTRL) |
+			APIC_REG_EXT_MASK(APIC_EILVTn(0)) |
+			APIC_REG_EXT_MASK(APIC_EILVTn(1)) |
+			APIC_REG_EXT_MASK(APIC_EILVTn(2)) |
+			APIC_REG_EXT_MASK(APIC_EILVTn(3));
+		last_reg = APIC_EXT_LAST_REG_OFFSET;
+	}
+
 	if (alignment + len > 4)
 		return 1;
 
-	if (offset > 0x3f0 ||
-	    !(kvm_lapic_readable_reg_mask(apic) & APIC_REG_MASK(offset)))
+	if (offset > last_reg)
 		return 1;
+
+	switch (offset) {
+	/*
+	 * Section 16.3.2 in the AMD Programmer's Manual Volume 2 states:
+	 * "APIC registers are aligned to 16-byte offsets and must be accessed
+	 * using naturally-aligned DWORD size read and writes."
+	 */
+	case KVM_APIC_REG_SIZE ... KVM_APIC_EXT_REG_SIZE - 16:
+		if (!(valid_reg_ext_mask & APIC_REG_EXT_MASK(offset)))
+			return 1;
+		break;
+	default:
+		if (!(kvm_lapic_readable_reg_mask(apic) & APIC_REG_MASK(offset)))
+			return 1;
+
+	}
 
 	result = __apic_read(apic, offset & ~0xf);
 
@@ -2386,6 +2423,14 @@ static int kvm_lapic_reg_write(struct kvm_lapic *apic, u32 reg, u32 val)
 		else
 			kvm_apic_send_ipi(apic, APIC_DEST_SELF | val, 0);
 		break;
+
+	case APIC_ECTRL:
+	case APIC_EILVTn(0):
+	case APIC_EILVTn(1):
+	case APIC_EILVTn(2):
+	case APIC_EILVTn(3):
+		kvm_lapic_set_reg(apic, reg, val);
+		break;
 	default:
 		ret = 1;
 		break;
@@ -2664,6 +2709,24 @@ void kvm_inhibit_apic_access_page(struct kvm_vcpu *vcpu)
 	kvm_vcpu_srcu_read_lock(vcpu);
 }
 
+/*
+ * Initialize extended APIC registers to the default value when guest is
+ * started. The extended APIC registers should only be initialized when the
+ * EXTAPIC feature is enabled on the guest.
+ */
+void kvm_apic_init_eilvt_regs(struct kvm_vcpu *vcpu)
+{
+	struct kvm_lapic *apic = vcpu->arch.apic;
+	int i;
+
+	if (guest_cpuid_has(vcpu, X86_FEATURE_EXTAPIC)) {
+		kvm_lapic_set_reg(apic, APIC_EFEAT, APIC_EFEAT_DEFAULT);
+		kvm_lapic_set_reg(apic, APIC_ECTRL, APIC_ECTRL_DEFAULT);
+		for (i = 0; i < APIC_EILVT_NR_MAX; i++)
+			kvm_lapic_set_reg(apic, APIC_EILVTn(i), APIC_EILVT_MASKED);
+	}
+}
+
 void kvm_lapic_reset(struct kvm_vcpu *vcpu, bool init_event)
 {
 	struct kvm_lapic *apic = vcpu->arch.apic;
@@ -2718,6 +2781,8 @@ void kvm_lapic_reset(struct kvm_vcpu *vcpu, bool init_event)
 		kvm_lapic_set_reg(apic, APIC_ISR + 0x10 * i, 0);
 		kvm_lapic_set_reg(apic, APIC_TMR + 0x10 * i, 0);
 	}
+	kvm_apic_init_eilvt_regs(vcpu);
+
 	kvm_apic_update_apicv(vcpu);
 	update_divide_count(apic);
 	atomic_set(&apic->lapic_timer.pending, 0);
