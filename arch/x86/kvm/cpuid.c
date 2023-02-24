@@ -380,6 +380,13 @@ static void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	static_call(kvm_x86_vcpu_after_set_cpuid)(vcpu);
 
 	/*
+	 * AVIC or VNMI support is a pre-requisite for enabling VIBS.
+	 * In case of AVIC, initialize extended LVT registers at guest startup
+	 * for delivery of IBS samples using VNMI via AVIC.
+	 */
+	kvm_apic_init_eilvt_regs(vcpu);
+
+	/*
 	 * Except for the MMU, which needs to do its thing any vendor specific
 	 * adjustments to the reserved GPA bits.
 	 */
