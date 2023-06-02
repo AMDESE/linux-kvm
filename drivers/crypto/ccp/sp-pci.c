@@ -404,7 +404,7 @@ static int __maybe_unused sp_pci_resume(struct device *dev)
 	return sp_resume(sp);
 }
 
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 static const struct sev_vdata sevv1 = {
 	.cmdresp_reg		= 0x10580,	/* C2PMSG_32 */
 	.cmdbuff_addr_lo_reg	= 0x105e0,	/* C2PMSG_56 */
@@ -518,7 +518,7 @@ static const struct sp_dev_vdata dev_vdata[] = {
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
 		.ccp_vdata = &ccpv5a,
 #endif
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv1,
 #endif
 	},
@@ -533,7 +533,7 @@ static const struct sp_dev_vdata dev_vdata[] = {
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
 		.ccp_vdata = &ccpv5a,
 #endif
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv2,
 #endif
 	},
@@ -542,31 +542,31 @@ static const struct sp_dev_vdata dev_vdata[] = {
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
 		.ccp_vdata = &ccpv5a,
 #endif
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv3,
 #endif
 	},
 	{	/* 5 */
 		.bar = 2,
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv4,
 #endif
 	},
 	{	/* 6 */
 		.bar = 2,
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv3,
 #endif
 	},
 	{	/* 7 */
 		.bar = 2,
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv5,
 #endif
 	},
 	{	/* 8 */
 		.bar = 2,
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 		.psp_vdata = &pspv6,
 #endif
 	},

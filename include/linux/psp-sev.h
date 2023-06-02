@@ -812,7 +812,7 @@ struct sev_data_snp_commit {
 	u32 len;
 } __packed;
 
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 
 /**
  * sev_platform_init - perform SEV INIT command

@@ -40,7 +40,7 @@ enum tee_cmd_id {
 	TEE_CMD_ID_UNMAP_SHARED_MEM,
 };
 
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 /**
  * psp_tee_process_cmd() - Process command in Trusted Execution Environment
  * @cmd_id:     TEE command ID (&enum tee_cmd_id)

@@ -434,7 +434,7 @@ config CRYPTO_DEV_ATMEL_SHA204A
 	  will be called atmel-sha204a.
 
 config CRYPTO_DEV_CCP
-	bool "Support for AMD Secure Processor"
+	tristate "Support for AMD Secure Processor"
 	depends on ((X86 && PCI) || (ARM64 && (OF_ADDRESS || ACPI))) && HAS_IOMEM
 	help
 	  The AMD Secure Processor provides support for the Cryptographic Coprocessor
