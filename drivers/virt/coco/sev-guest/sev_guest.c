@@ -253,10 +253,9 @@ static int enc_dec_message(struct snp_guest_crypto *crypto, struct snp_guest_msg
 	return ret;
 }
 
-static int __enc_payload(struct snp_guest_dev *snp_dev, struct snp_guest_msg *msg,
+static int __enc_payload(struct snp_guest_crypto *crypto, struct snp_guest_msg *msg,
 			 void *plaintext, size_t len)
 {
-	struct snp_guest_crypto *crypto = snp_dev->crypto;
 	struct snp_guest_msg_hdr *hdr = &msg->hdr;
 
 	memset(crypto->iv, 0, crypto->iv_len);
@@ -265,10 +264,9 @@ static int __enc_payload(struct snp_guest_dev *snp_dev, struct snp_guest_msg *ms
 	return enc_dec_message(crypto, msg, plaintext, msg->payload, len, true);
 }
 
-static int dec_payload(struct snp_guest_dev *snp_dev, struct snp_guest_msg *msg,
+static int dec_payload(struct snp_guest_crypto *crypto, struct snp_guest_msg *msg,
 		       void *plaintext, size_t len)
 {
-	struct snp_guest_crypto *crypto = snp_dev->crypto;
 	struct snp_guest_msg_hdr *hdr = &msg->hdr;
 
 	/* Build IV with response buffer sequence number */
@@ -309,7 +307,7 @@ static int verify_and_dec_payload(struct snp_guest_dev *snp_dev, void *payload, 
 		return -EBADMSG;
 
 	/* Decrypt the payload */
-	return dec_payload(snp_dev, resp, payload, resp_hdr->msg_sz + crypto->a_len);
+	return dec_payload(snp_dev->crypto, resp, payload, resp_hdr->msg_sz + crypto->a_len);
 }
 
 static int enc_payload(struct snp_guest_dev *snp_dev, u64 seqno, int version, u8 type,
@@ -336,7 +334,7 @@ static int enc_payload(struct snp_guest_dev *snp_dev, u64 seqno, int version, u8
 	dev_dbg(snp_dev->dev, "request [seqno %lld type %d version %d sz %d]\n",
 		hdr->msg_seqno, hdr->msg_type, hdr->msg_version, hdr->msg_sz);
 
-	return __enc_payload(snp_dev, req, payload, sz);
+	return __enc_payload(snp_dev->crypto, req, payload, sz);
 }
 
 static int __handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
