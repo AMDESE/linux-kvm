@@ -779,6 +779,12 @@ void kvm_set_cpu_caps(void)
 	);
 
 	/*
+	 * Hide all IBS related features by default, it will be enabled
+	 * automatically when IBS virtualization is enabled
+	 */
+	kvm_cpu_cap_init_kvm_defined(CPUID_8000_001B_EAX, 0);
+
+	/*
 	 * Synthesize "LFENCE is serializing" into the AMD-defined entry in
 	 * KVM's supported CPUID if the feature is reported as supported by the
 	 * kernel.  LFENCE_RDTSC was a Linux-defined synthetic feature long
@@ -1259,6 +1265,14 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		entry->eax = entry->ebx = entry->ecx = 0;
 		entry->edx = 0; /* reserved */
 		break;
+	/* AMD IBS capability */
+	case 0x8000001B:
+		if (!kvm_cpu_cap_has(X86_FEATURE_IBS))
+			entry->eax = 0;
+
+		entry->ebx = entry->ecx = entry->edx = 0;
+		break;
+
 	case 0x8000001F:
 		if (!kvm_cpu_cap_has(X86_FEATURE_SEV)) {
 			entry->eax = entry->ebx = entry->ecx = entry->edx = 0;
