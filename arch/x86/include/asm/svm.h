@@ -215,6 +215,8 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 #define LBR_CTL_ENABLE_MASK BIT_ULL(0)
 #define VIRTUAL_VMLOAD_VMSAVE_ENABLE_MASK BIT_ULL(1)
 
+#define VIRTUAL_IBS_ENABLE_MASK BIT_ULL(2)
+
 #define SVM_INTERRUPT_SHADOW_MASK	BIT_ULL(0)
 #define SVM_GUEST_INTERRUPT_MASK	BIT_ULL(1)
 
@@ -254,6 +256,8 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 #define AVIC_DOORBELL_PHYSICAL_ID_MASK			GENMASK_ULL(11, 0)
 
 #define VMCB_AVIC_APIC_BAR_MASK				0xFFFFFFFFFF000ULL
+
+#define SVM_SEV_ES_FEAT_VIBS				BIT(12)
 
 #define AVIC_UNACCEL_ACCESS_WRITE_MASK		1
 #define AVIC_UNACCEL_ACCESS_OFFSET_MASK		0xFF0

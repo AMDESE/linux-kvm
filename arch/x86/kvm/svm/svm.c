@@ -250,7 +250,7 @@ static int lbrv = true;
 module_param(lbrv, int, 0444);
 
 /* enable/disable IBS virtualization */
-static int vibs;
+static int vibs = true;
 module_param(vibs, int, 0444);
 
 static int tsc_scaling = true;
@@ -1276,10 +1276,14 @@ static inline void init_vmcb_after_set_cpuid(struct kvm_vcpu *vcpu)
 		/*
 		 * If hardware supports VIBS then no need to intercept IBS MSRS
 		 * when VIBS is enabled in guest.
+		 *
+		 * Enable VIBS by setting bit 2 at offset 0xb8 in VMCB.
 		 */
 		if (vibs) {
-			if (guest_cpuid_has(&svm->vcpu, X86_FEATURE_IBS)) {
+			if (guest_cpuid_has(&svm->vcpu, X86_FEATURE_IBS) &&
+			    is_passthrough_pmu_enabled(vcpu)) {
 				svm_ibs_msr_interception(svm, false);
+				svm->vmcb->control.virt_ext |= VIRTUAL_IBS_ENABLE_MASK;
 				svm->ibs_enabled = true;
 			} else {
 				svm_ibs_msr_interception(svm, true);
@@ -5146,6 +5150,26 @@ static __init void svm_adjust_mmio_mask(void)
 	kvm_mmu_set_mmio_spte_mask(mask, mask, PT_WRITABLE_MASK | PT_USER_MASK);
 }
 
+static void svm_ibs_set_cpu_caps(void)
+{
+	kvm_cpu_cap_check_and_set(X86_FEATURE_IBS);
+	kvm_cpu_cap_check_and_set(X86_FEATURE_EXTLVT);
+	kvm_cpu_cap_check_and_set(X86_FEATURE_EXTAPIC);
+	if (kvm_cpu_cap_has(X86_FEATURE_IBS)) {
+		kvm_cpu_cap_set(X86_FEATURE_IBS_AVAIL);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_FETCHSAM);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_OPSAM);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_RDWROPCNT);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_OPCNT);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_BRNTRGT);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_OPCNTEXT);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_RIPINVALIDCHK);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_OPBRNFUSE);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_FETCHCTLEXTD);
+		kvm_cpu_cap_set(X86_FEATURE_IBS_ZEN4_EXT);
+	}
+}
+
 static __init void svm_set_cpu_caps(void)
 {
 	kvm_set_cpu_caps();
@@ -5187,6 +5211,9 @@ static __init void svm_set_cpu_caps(void)
 		/* Nested VM can receive #VMEXIT instead of triggering #GP */
 		kvm_cpu_cap_set(X86_FEATURE_SVME_ADDR_CHK);
 	}
+
+	if (vibs && enable_passthrough_pmu)
+		svm_ibs_set_cpu_caps();
 
 	/* CPUID 0x80000008 */
 	if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD) ||

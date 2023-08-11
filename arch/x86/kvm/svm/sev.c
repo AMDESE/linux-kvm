@@ -65,7 +65,7 @@ module_param_named(debug_swap, sev_es_debug_swap_enabled, bool, 0444);
 #define sev_es_debug_swap_enabled false
 #endif /* CONFIG_KVM_AMD_SEV */
 
-static bool sev_es_vibs_enabled;
+static bool sev_es_vibs_enabled = true;
 static u8 sev_enc_bit;
 static DECLARE_RWSEM(sev_deactivate_lock);
 static DEFINE_MUTEX(sev_bitmap_lock);
@@ -615,6 +615,9 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 
 	if (sev_es_debug_swap_enabled)
 		save->sev_features |= SVM_SEV_FEAT_DEBUG_SWAP;
+
+	if (svm->ibs_enabled && sev_es_vibs_enabled)
+		save->sev_features |= SVM_SEV_ES_FEAT_VIBS;
 
 	pr_debug("Virtual Machine Save Area (VMSA):\n");
 	print_hex_dump_debug("", DUMP_PREFIX_NONE, 16, 1, save, sizeof(*save), false);
