@@ -1,3 +1,118 @@
+SEV TIO tree prototype
+======================
+
+Goal
+--------
+
+Support secure PCI devices pass through to confidential VMs.
+The support is defined by PCIe 6, SPDM, TDISP (not AMD) and SEV TIO specification (by AMD).
+
+SEV TIO spec:
+https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58271_0_70.pdf
+Whitepaper:
+https://www.amd.com/content/dam/amd/en/documents/epyc-business-docs/white-papers/sev-tio-whitepaper.pdf
+
+The changeset adds:
+- a generic TSM.ko module;
+makes necessary changes to:
+- ccp (interface to AMD secure platform processor, "PSP", works on the host),
+- sev-guest (interace to PSP for confidential SNP guest),
+- kvm_amd,
+- mmufd,
+- vfio kvm device,
+- kvm-x86.
+
+Acronyms
+--------
+
+TEE - Trusted Execution Environments, a concept of managing trust between the host
+	and devices
+TSM - TEE Security Manager (TSM), an entity which ensures security on the host
+PSP - AMD platform secure processor (also "ASP", "AMD-SP"), acts as TSM on AMD.
+SEV TIO - the TIO protocol implemented by the PSP and used by the host
+GHCB - guest/host communication block - a protocol for guest-to-host communication
+	via a shared page
+
+CMA, IDE, TDISP,
+TVM, DSM, SPDM, DOE
+
+Code
+----
+
+Written with AMD SEV SNP in mind, TSM is the PSP and therefore no much of IDE/TDISP
+is left for the host or guest OS.
+
+Add a common module to expose various data objects in the same way in host and
+guest OS.
+
+Provide a know on the host to enable IDE encryption.
+
+Add another version of Guest Request for secure guest<->PSP communication.
+
+Enable secure DMA by:
+- configuring vTOM in a secure DTE via the PSP to cover the entire guest RAM;
+- mapping all private memory pages in IOMMU just like as they were shared
+(requires hacking iommufd);
+- skipping various enforcements of non-SME or SWIOTLB in the guest;
+
+No mixed share+private DMA supported within the same IOMMU.
+
+Enable secure MMIO by:
+- configuring RMP entries via the PSP;
+- adding necessary helpers for mapping MMIO with the Cbit set;
+- hacking the KVM #PF handler to allow private MMIO failts.
+
+Based on the latest upstream KVM (at the moment it is kvm-coco-queue).
+
+
+Workflow
+--------
+
+1. Boot host OS.
+2. "Connect" the physical device.
+3. Bind a VF to VFIO-PCI.
+4. Run QEMU _without_ the device yet.
+5. Hotplug the VF to the VM.
+6. (if not already) Load the device driver.
+7. Right after the BusMaster is enabled, tsm.ko performs secure DMA and MMIO setup.
+8. Run tests, for example:
+sudo ./pcimem/pcimem /sys/bus/pci/devices/0000\:01\:00.0/resource4_enc 0 w*4 0xabcd
+
+
+Assumptions
+-----------
+
+This requires hotpligging into the VM vs passing the device via the command line as
+VFIO maps all guest memory as the device init step which is too soon as
+SNP LAUNCH UPDATE happens later and will fail if VFIO maps private memory before that.
+
+This requires the BME hack as MMIO and BusMaster enable bits cannot be 0 after MMIO
+validation is done and there are moments in the guest OS booting process when this
+appens.
+
+SVSM could help addressing these (not implemented at the moment).
+
+QEMU advertises TEE-IO capability to the VM. An additional x-tio flag is added to
+vfio-pci.
+
+
+TODOs
+-----
+
+Deal with PCI reset. Hot unplug+plug? Power states too.
+
+Do better generalization, the current code heavily uses SEV TIO defined
+structures in supposedly generic code.
+
+
+QEMU tree
+---------
+
+https://github.com/aik/qemu/commits/tio
+
+
+(old text)
+
 Linux kernel
 ============
 
