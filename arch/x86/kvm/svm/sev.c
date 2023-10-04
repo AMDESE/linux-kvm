@@ -34,6 +34,7 @@
 #include "svm_ops.h"
 #include "cpuid.h"
 #include "trace.h"
+#include "lapic.h"
 
 #define GHCB_VERSION_MAX	2ULL
 #define GHCB_VERSION_DEFAULT	2ULL
@@ -4566,6 +4567,9 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 	/* Clear intercepts on selected MSRs */
 	set_msr_interception(vcpu, svm->msrpm, MSR_EFER, 1, 1);
 	set_msr_interception(vcpu, svm->msrpm, MSR_IA32_CR_PAT, 1, 1);
+
+	if (vcpu->arch.apic->secure_avic_active)
+		set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_SECURE_AVIC_CONTROL, 1, 1);
 }
 
 void sev_init_vmcb(struct vcpu_svm *svm)
