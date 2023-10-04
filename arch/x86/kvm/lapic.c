@@ -3143,7 +3143,8 @@ static void apic_sync_pv_eoi_to_guest(struct kvm_vcpu *vcpu,
 	    /* Cache not set: could be safe but we don't bother. */
 	    apic->highest_isr_cache == -1 ||
 	    /* Need EOI to update ioapic. */
-	    kvm_ioapic_handles_vector(apic, apic->highest_isr_cache)) {
+	    kvm_ioapic_handles_vector(apic, apic->highest_isr_cache) ||
+	    vcpu->arch.apic->secure_avic_active) {
 		/*
 		 * PV EOI was disabled by apic_sync_pv_eoi_from_guest
 		 * so we need not do anything here.
