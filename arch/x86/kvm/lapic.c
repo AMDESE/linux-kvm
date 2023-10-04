@@ -947,7 +947,13 @@ static int apic_has_interrupt_for_ppr(struct kvm_lapic *apic, u32 ppr)
 		highest_irr = kvm_x86_call(sync_pir_to_irr)(apic->vcpu);
 	else
 		highest_irr = apic_find_highest_irr(apic);
-	if (highest_irr == -1 || (highest_irr & 0xF0) <= ppr)
+	/*
+	 * Secure AVIC does not propagate PROCPRI or TASKPRI values to KVM.
+	 * Determine if there is pending interrupt (when using Secure AVIC),
+	 * based on only IRR.
+	 */
+	if (highest_irr == -1 || (!apic->secure_avic_active &&
+				  ((highest_irr & 0xF0) <= ppr)))
 		return -1;
 	return highest_irr;
 }
@@ -956,6 +962,14 @@ static bool __apic_update_ppr(struct kvm_lapic *apic, u32 *new_ppr)
 {
 	u32 tpr, isrv, ppr, old_ppr;
 	int isr;
+
+	/*
+	 * Secure AVIC does not propagate PROCPRI or TASKPRI values to KVM.
+	 * Always return true for Secure AVIC so that apic_update_ppr() will
+	 * find pending interrupts based on only IRR.
+	 */
+	if (apic->secure_avic_active)
+		return true;
 
 	old_ppr = kvm_lapic_get_reg(apic, APIC_PROCPRI);
 	tpr = kvm_lapic_get_reg(apic, APIC_TASKPRI);
