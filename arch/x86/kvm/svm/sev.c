@@ -4494,6 +4494,10 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 
 	svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_SEV_ES_ENABLE;
 
+	if (cpu_feature_enabled(X86_FEATURE_ALLOWED_SEV_FEATURES))
+		svm->vmcb->control.allowed_sev_features = VMCB_ALLOWED_SEV_FEATURES_VALID |
+								VMCB_ALLOWED_SEV_FEATURES;
+
 	/*
 	 * An SEV-ES guest requires a VMSA area that is a separate from the
 	 * VMCB page. Do not include the encryption mask on the VMSA physical
