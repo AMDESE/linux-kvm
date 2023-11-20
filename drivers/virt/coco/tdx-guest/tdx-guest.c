@@ -15,7 +15,7 @@
 #include <linux/set_memory.h>
 #include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/tsm.h>
+#include <linux/tsm-report.h>
 #include <linux/sizes.h>
 
 #include <uapi/linux/tdx-guest.h>
@@ -278,7 +278,7 @@ static const struct x86_cpu_id tdx_guest_ids[] = {
 };
 MODULE_DEVICE_TABLE(x86cpu, tdx_guest_ids);
 
-static const struct tsm_ops tdx_tsm_ops = {
+static const struct tsm_report_ops tdx_tsm_report_ops = {
 	.name = KBUILD_MODNAME,
 	.report_new = tdx_report_new,
 };
@@ -301,7 +301,7 @@ static int __init tdx_guest_init(void)
 		goto free_misc;
 	}
 
-	ret = tsm_register(&tdx_tsm_ops, NULL, NULL);
+	ret = tsm_register(&tdx_tsm_report_ops, NULL, NULL);
 	if (ret)
 		goto free_quote;
 
@@ -318,7 +318,7 @@ module_init(tdx_guest_init);
 
 static void __exit tdx_guest_exit(void)
 {
-	tsm_unregister(&tdx_tsm_ops);
+	tsm_unregister(&tdx_tsm_report_ops);
 	free_quote_buf(quote_data);
 	misc_deregister(&tdx_misc_dev);
 }
