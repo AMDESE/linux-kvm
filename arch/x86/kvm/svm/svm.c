@@ -155,6 +155,22 @@ static const struct svm_direct_access_msrs {
 	{ .index = MSR_AMD64_PERF_CNTR_GLOBAL_STATUS,	.always = false },
 	{ .index = MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR,	.always = false },
 	{ .index = MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_SET,	.always = false },
+	{ .index = X2APIC_MSR(APIC_EFEAT),		.always = false },
+	{ .index = X2APIC_MSR(APIC_ECTRL),		.always = false },
+	{ .index = X2APIC_MSR(APIC_EILVTn(0)),		.always = false },
+	{ .index = X2APIC_MSR(APIC_EILVTn(1)),		.always = false },
+	{ .index = X2APIC_MSR(APIC_EILVTn(2)),		.always = false },
+	{ .index = X2APIC_MSR(APIC_EILVTn(3)),		.always = false },
+	{ .index = MSR_AMD64_IBSFETCHCTL,		.always = false },
+	{ .index = MSR_AMD64_IBSFETCHLINAD,		.always = false },
+	{ .index = MSR_AMD64_IBSOPCTL,			.always = false },
+	{ .index = MSR_AMD64_IBSOPRIP,			.always = false },
+	{ .index = MSR_AMD64_IBSOPDATA,			.always = false },
+	{ .index = MSR_AMD64_IBSOPDATA2,		.always = false },
+	{ .index = MSR_AMD64_IBSOPDATA3,		.always = false },
+	{ .index = MSR_AMD64_IBSDCLINAD,		.always = false },
+	{ .index = MSR_AMD64_IBSBRTARGET,		.always = false },
+	{ .index = MSR_AMD64_ICIBSEXTDCTL,		.always = false },
 	{ .index = MSR_INVALID,				.always = false },
 };
 
@@ -232,6 +248,10 @@ module_param(vgif, int, 0444);
 /* enable/disable LBR virtualization */
 static int lbrv = true;
 module_param(lbrv, int, 0444);
+
+/* enable/disable IBS virtualization */
+static int vibs;
+module_param(vibs, int, 0444);
 
 static int tsc_scaling = true;
 module_param(tsc_scaling, int, 0444);
@@ -1079,6 +1099,20 @@ void disable_nmi_singlestep(struct vcpu_svm *svm)
 	}
 }
 
+static void svm_ibs_msr_interception(struct vcpu_svm *svm, bool intercept)
+{
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSFETCHCTL, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSFETCHLINAD, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSOPCTL, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSOPRIP, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSOPDATA, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSOPDATA2, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSOPDATA3, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSDCLINAD, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_IBSBRTARGET, !intercept, !intercept);
+	set_msr_interception(&svm->vcpu, svm->msrpm, MSR_AMD64_ICIBSEXTDCTL, !intercept, !intercept);
+}
+
 static void grow_ple_window(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -1239,6 +1273,19 @@ static inline void init_vmcb_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 		if (is_passthrough_pmu_enabled(vcpu))
 			svm_clr_intercept(svm, INTERCEPT_RDPMC);
+		/*
+		 * If hardware supports VIBS then no need to intercept IBS MSRS
+		 * when VIBS is enabled in guest.
+		 */
+		if (vibs) {
+			if (guest_cpuid_has(&svm->vcpu, X86_FEATURE_IBS)) {
+				svm_ibs_msr_interception(svm, false);
+				svm->ibs_enabled = true;
+			} else {
+				svm_ibs_msr_interception(svm, true);
+				svm->ibs_enabled = false;
+			}
+		}
 	}
 }
 
@@ -2941,6 +2988,19 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_AMD64_DE_CFG:
 		msr_info->data = svm->msr_decfg;
 		break;
+
+	case MSR_AMD64_IBSCTL:
+		if (guest_cpuid_has(vcpu, X86_FEATURE_IBS))
+			msr_info->data = IBSCTL_LVT_OFFSET_VALID;
+		else
+			msr_info->data = 0;
+		break;
+
+	case MSR_AMD64_IBSDCPHYSAD:
+	case MSR_AMD64_IBSFETCHPHYSAD:
+		msr_info->data = 0;
+		break;
+
 	default:
 		return kvm_get_msr_common(vcpu, msr_info);
 	}
@@ -3176,6 +3236,9 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		svm->msr_decfg = data;
 		break;
 	}
+	case MSR_AMD64_IBSDCPHYSAD:
+	case MSR_AMD64_IBSFETCHPHYSAD:
+		return 1;
 	default:
 		return kvm_set_msr_common(vcpu, msr);
 	}
@@ -5298,6 +5361,12 @@ static __init int svm_hardware_setup(void)
 		else
 			pr_info("LBR virtualization supported\n");
 	}
+
+	if (vibs)
+		vibs = boot_cpu_has(X86_FEATURE_VIBS) && (vnmi || avic);
+
+	if (vibs)
+		pr_info("IBS virtualization supported\n");
 
 	if (!enable_pmu)
 		pr_info("PMU virtualization is disabled\n");

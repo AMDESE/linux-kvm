@@ -65,6 +65,7 @@ module_param_named(debug_swap, sev_es_debug_swap_enabled, bool, 0444);
 #define sev_es_debug_swap_enabled false
 #endif /* CONFIG_KVM_AMD_SEV */
 
+static bool sev_es_vibs_enabled;
 static u8 sev_enc_bit;
 static DECLARE_RWSEM(sev_deactivate_lock);
 static DEFINE_MUTEX(sev_bitmap_lock);
@@ -2273,6 +2274,9 @@ out:
 	if (!sev_es_enabled || !cpu_feature_enabled(X86_FEATURE_DEBUG_SWAP) ||
 	    !cpu_feature_enabled(X86_FEATURE_NO_NESTED_DATA_BP))
 		sev_es_debug_swap_enabled = false;
+
+	if (!sev_es_enabled || !cpu_feature_enabled(X86_FEATURE_SEV_ES_VIBS))
+		sev_es_vibs_enabled = false;
 #endif
 }
 
