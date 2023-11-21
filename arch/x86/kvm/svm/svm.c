@@ -155,6 +155,10 @@ module_param(vgif, int, 0444);
 int lbrv = true;
 module_param(lbrv, int, 0444);
 
+/* enable/disable IBS virtualization */
+static int vibs = true;
+module_param(vibs, int, 0444);
+
 static int tsc_scaling = true;
 module_param(tsc_scaling, int, 0444);
 
@@ -765,6 +769,32 @@ static void svm_recalc_pmu_msr_intercepts(struct kvm_vcpu *vcpu)
 				  MSR_TYPE_RW, intercept);
 }
 
+static void svm_recalc_ibs_msr_intercepts(struct kvm_vcpu *vcpu)
+{
+	// Check once again
+	bool intercept = !kvm_vcpu_has_mediated_pmu(vcpu);
+
+	/*
+	 * If hardware supports VIBS then no need to intercept IBS MSRs
+	 * when VIBS is enabled in guest.
+	 *
+	 * Enable VIBS by setting bit 2 at offset 0xb8 in VMCB.
+	 */
+	if (!vibs || !guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
+		return;
+
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSFETCHCTL, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSFETCHLINAD, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPCTL, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPRIP, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPDATA, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPDATA2, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPDATA3, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSDCLINAD, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSBRTARGET, MSR_TYPE_RW, intercept);
+	svm_set_intercept_for_msr(vcpu, MSR_AMD64_ICIBSEXTDCTL, MSR_TYPE_RW, intercept);
+}
+
 static void svm_recalc_msr_intercepts(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -834,6 +864,7 @@ static void svm_recalc_msr_intercepts(struct kvm_vcpu *vcpu)
 		sev_es_recalc_msr_intercepts(vcpu);
 
 	svm_recalc_pmu_msr_intercepts(vcpu);
+	svm_recalc_ibs_msr_intercepts(vcpu);
 
 	/*
 	 * x2APIC intercepts are modified on-demand and cannot be filtered by
@@ -1206,6 +1237,9 @@ static void init_vmcb(struct kvm_vcpu *vcpu, bool init_event)
 
 	if (vcpu->kvm->arch.bus_lock_detection_enabled)
 		svm_set_intercept(svm, INTERCEPT_BUSLOCK);
+
+	if (guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
+		svm->vmcb->control.virt_ext |= VIRTUAL_IBS_ENABLE_MASK;
 
 	if (sev_guest(vcpu->kvm))
 		sev_init_vmcb(svm, init_event);
@@ -2852,6 +2886,27 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_AMD64_DE_CFG:
 		msr_info->data = svm->msr_decfg;
 		break;
+
+	case MSR_AMD64_IBSCTL:
+		if (guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
+			msr_info->data = IBSCTL_LVT_OFFSET_VALID;
+		else
+			msr_info->data = 0;
+		break;
+
+
+	/*
+	 * When IBS virtualization is enabled, guest reads from
+	 * MSR_AMD64_IBSFETCHPHYSAD and MSR_AMD64_IBSDCPHYSAD must return 0.
+	 * This is done for security reasons, as guests should not be allowed to
+	 * access or infer any information about the system's physical
+	 * addresses.
+	 */
+	case MSR_AMD64_IBSDCPHYSAD:
+	case MSR_AMD64_IBSFETCHPHYSAD:
+		msr_info->data = 0;
+		break;
+
 	default:
 		return kvm_get_msr_common(vcpu, msr_info);
 	}
@@ -3111,6 +3166,16 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		svm->msr_decfg = data;
 		break;
 	}
+	/*
+	 * When IBS virtualization is enabled, guest writes to
+	 * MSR_AMD64_IBSFETCHPHYSAD and MSR_AMD64_IBSDCPHYSAD must be ignored.
+	 * This is done for security reasons, as guests should not be allowed to
+	 * access or infer any information about the system's physical
+	 * addresses.
+	 */
+	case MSR_AMD64_IBSDCPHYSAD:
+	case MSR_AMD64_IBSFETCHPHYSAD:
+		return 1;
 	default:
 		return kvm_set_msr_common(vcpu, msr);
 	}
@@ -4524,6 +4589,9 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	if (guest_cpuid_is_intel_compatible(vcpu))
 		guest_cpu_cap_clear(vcpu, X86_FEATURE_V_VMSAVE_VMLOAD);
 
+	if (guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
+		svm->vmcb->control.virt_ext |= VIRTUAL_IBS_ENABLE_MASK;
+
 	if (sev_guest(vcpu->kvm))
 		sev_vcpu_after_set_cpuid(svm);
 }
@@ -5303,6 +5371,26 @@ static __init void svm_adjust_mmio_mask(void)
 	kvm_mmu_set_mmio_spte_mask(mask, mask, PT_WRITABLE_MASK | PT_USER_MASK);
 }
 
+static void svm_ibs_set_cpu_caps(void)
+{
+	kvm_cpu_cap_check_and_set(X86_FEATURE_IBS);
+	if (kvm_cpu_cap_has(X86_FEATURE_IBS)) {
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_AVAIL);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_FETCHSAM);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_OPSAM);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_RDWROPCNT);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_OPCNT);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_BRNTRGT);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_OPCNTEXT);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_RIPINVALIDCHK);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_OPBRNFUSE);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_FETCHCTLEXTD);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_ZEN4_EXT);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_LOADLATFIL);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_ZEN4_DTLBSTAT);
+	}
+}
+
 static __init void svm_set_cpu_caps(void)
 {
 	kvm_initialize_cpu_caps();
@@ -5358,6 +5446,8 @@ static __init void svm_set_cpu_caps(void)
 
 	if (cpu_feature_enabled(X86_FEATURE_EXTAPIC))
 		kvm_caps.has_extapic = true;
+	if (vibs)
+		svm_ibs_set_cpu_caps();
 
 	/* CPUID 0x80000008 */
 	if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD) ||
@@ -5546,6 +5636,12 @@ static __init int svm_hardware_setup(void)
 		svm_x86_ops.is_vnmi_pending = NULL;
 		svm_x86_ops.set_vnmi_pending = NULL;
 	}
+
+	vibs = enable_mediated_pmu && vnmi && vibs
+		&& boot_cpu_has(X86_FEATURE_VIBS);
+
+	if (vibs)
+		pr_info("IBS virtualization supported\n");
 
 	if (!enable_pmu)
 		pr_info("PMU virtualization is disabled\n");
