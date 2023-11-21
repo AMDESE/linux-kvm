@@ -771,16 +771,9 @@ static void svm_recalc_pmu_msr_intercepts(struct kvm_vcpu *vcpu)
 
 static void svm_recalc_ibs_msr_intercepts(struct kvm_vcpu *vcpu)
 {
-	// Check once again
 	bool intercept = !kvm_vcpu_has_mediated_pmu(vcpu);
 
-	/*
-	 * If hardware supports VIBS then no need to intercept IBS MSRs
-	 * when VIBS is enabled in guest.
-	 *
-	 * Enable VIBS by setting bit 2 at offset 0xb8 in VMCB.
-	 */
-	if (!vibs || !guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
+	if (!enable_mediated_pmu || !guest_cpu_cap_has(vcpu, X86_FEATURE_IBS))
 		return;
 
 	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSFETCHCTL, MSR_TYPE_RW, intercept);
