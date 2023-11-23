@@ -503,7 +503,7 @@ static int adjust_direct_map(u64 pfn, int rmp_level)
  * The optimal solution would be range locking to avoid locking disjoint
  * regions unnecessarily but there's no support for that yet.
  */
-static int rmpupdate(u64 pfn, struct rmp_state *state)
+static int rmpupdate(u64 pfn, struct rmp_state *state, bool mmio)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
 	int ret, level;
@@ -513,7 +513,7 @@ static int rmpupdate(u64 pfn, struct rmp_state *state)
 
 	level = RMP_TO_PG_LEVEL(state->pagesize);
 
-	if (adjust_direct_map(pfn, level))
+	if (!mmio && adjust_direct_map(pfn, level))
 		return -EFAULT;
 
 	do {
@@ -547,9 +547,27 @@ int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, u32 asid, bool immut
 	state.gpa = gpa;
 	state.pagesize = PG_LEVEL_TO_RMP(level);
 
-	return rmpupdate(pfn, &state);
+	return rmpupdate(pfn, &state, false);
 }
 EXPORT_SYMBOL_GPL(rmp_make_private);
+
+int rmp_make_private_mmio(u64 pfn, u64 gpa, enum pg_level level, u32 asid, bool immutable)
+{
+	struct rmp_state state;
+
+	if (WARN_ON_ONCE(pfn > rmptable_max_pfn))
+		return -ERANGE;
+
+	memset(&state, 0, sizeof(state));
+	state.assigned = 1;
+	state.asid = asid;
+	state.immutable = immutable;
+	state.gpa = gpa;
+	state.pagesize = PG_LEVEL_TO_RMP(level);
+
+	return rmpupdate(pfn, &state, true);
+}
+EXPORT_SYMBOL_GPL(rmp_make_private_mmio);
 
 /* Transition a page to hypervisor-owned/shared state in the RMP table. */
 int rmp_make_shared(u64 pfn, enum pg_level level)
@@ -559,7 +577,7 @@ int rmp_make_shared(u64 pfn, enum pg_level level)
 	memset(&state, 0, sizeof(state));
 	state.pagesize = PG_LEVEL_TO_RMP(level);
 
-	return rmpupdate(pfn, &state);
+	return rmpupdate(pfn, &state, false);
 }
 EXPORT_SYMBOL_GPL(rmp_make_shared);
 

@@ -769,6 +769,8 @@ static inline int sev_private_max_mapping_level(struct kvm *kvm, kvm_pfn_t pfn)
 }
 
 #endif
+int sev_tsm_bind(struct kvm *kvm, struct device *dev, u32 guest_rid);
+void sev_tsm_unbind(struct kvm *kvm, struct device *dev);
 
 /* vmenter.S */
 

@@ -14016,3 +14016,15 @@ static void __exit kvm_x86_exit(void)
 	WARN_ON_ONCE(static_branch_unlikely(&kvm_has_noapic_vcpu));
 }
 module_exit(kvm_x86_exit);
+
+int kvm_arch_tsm_bind(struct kvm *kvm, struct device *dev, u32 guest_rid)
+{
+	return static_call(kvm_x86_tsm_bind)(kvm, dev, guest_rid);
+}
+EXPORT_SYMBOL_GPL(kvm_arch_tsm_bind);
+
+void kvm_arch_tsm_unbind(struct kvm *kvm, struct device *dev)
+{
+	static_call(kvm_x86_tsm_unbind)(kvm, dev);
+}
+EXPORT_SYMBOL_GPL(kvm_arch_tsm_unbind);

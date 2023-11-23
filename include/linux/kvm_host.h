@@ -2490,5 +2490,7 @@ void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
 long kvm_arch_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 				    struct kvm_pre_fault_memory *range);
 #endif
+int kvm_arch_tsm_bind(struct kvm *kvm, struct device *dev, u32 guest_rid);
+void kvm_arch_tsm_unbind(struct kvm *kvm, struct device *dev);
 
 #endif

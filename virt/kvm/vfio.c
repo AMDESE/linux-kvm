@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
+#include <linux/tsm.h>
 #include "vfio.h"
 
 #ifdef CONFIG_SPAPR_TCE_IOMMU
@@ -29,8 +30,14 @@ struct kvm_vfio_file {
 #endif
 };
 
+struct kvm_vfio_tdi {
+	struct list_head node;
+	struct vfio_device *vdev;
+};
+
 struct kvm_vfio {
 	struct list_head file_list;
+	struct list_head tdi_list;
 	struct mutex lock;
 	bool noncoherent;
 };
@@ -76,6 +83,22 @@ static bool kvm_vfio_file_is_valid(struct file *file)
 	ret = fn(file);
 
 	symbol_put(vfio_file_is_valid);
+
+	return ret;
+}
+
+static struct vfio_device *kvm_vfio_file_device(struct file *file)
+{
+	struct vfio_device *(*fn)(struct file *file);
+	struct vfio_device *ret;
+
+	fn = symbol_get(vfio_file_device);
+	if (!fn)
+		return NULL;
+
+	ret = fn(file);
+
+	symbol_put(vfio_file_device);
 
 	return ret;
 }
@@ -297,6 +320,103 @@ static int kvm_vfio_set_file(struct kvm_device *dev, long attr,
 	return -ENXIO;
 }
 
+static int kvm_dev_tsm_bind(struct kvm_device *dev, void __user *arg)
+{
+	struct kvm_vfio *kv = dev->private;
+	struct kvm_vfio_tsm_bind tb;
+	struct kvm_vfio_tdi *ktdi;
+	struct vfio_device *vdev;
+	struct fd fdev;
+	int ret;
+
+	if (copy_from_user(&tb, arg, sizeof(tb)))
+		return -EFAULT;
+
+	ktdi = kzalloc(sizeof(*ktdi), GFP_KERNEL_ACCOUNT);
+	if (!ktdi)
+		return -ENOMEM;
+
+	fdev = fdget(tb.devfd);
+	if (!fdev.file)
+		return -EBADF;
+
+	ret = -ENOENT;
+
+	mutex_lock(&kv->lock);
+
+	vdev = kvm_vfio_file_device(fdev.file);
+	if (vdev) {
+		ret = kvm_arch_tsm_bind(dev->kvm, vdev->dev, tb.guest_rid);
+		if (!ret) {
+			ktdi->vdev = vdev;
+			list_add_tail(&ktdi->node, &kv->tdi_list);
+		} else {
+			vfio_put_device(vdev);
+		}
+	}
+
+	fdput(fdev);
+	mutex_unlock(&kv->lock);
+	if (ret)
+		kfree(ktdi);
+
+	return ret;
+}
+
+static int kvm_dev_tsm_unbind(struct kvm_device *dev, void __user *arg)
+{
+	struct kvm_vfio *kv = dev->private;
+	struct kvm_vfio_tsm_bind tb;
+	struct kvm_vfio_tdi *ktdi;
+	struct vfio_device *vdev;
+	struct fd fdev;
+	int ret;
+
+	if (copy_from_user(&tb, arg, sizeof(tb)))
+		return -EFAULT;
+
+	fdev = fdget(tb.devfd);
+	if (!fdev.file)
+		return -EBADF;
+
+	ret = -ENOENT;
+
+	mutex_lock(&kv->lock);
+
+	vdev = kvm_vfio_file_device(fdev.file);
+	if (vdev) {
+		list_for_each_entry(ktdi, &kv->tdi_list, node) {
+			if (ktdi->vdev != vdev)
+				continue;
+
+			kvm_arch_tsm_unbind(dev->kvm, vdev->dev);
+			list_del(&ktdi->node);
+			kfree(ktdi);
+			vfio_put_device(vdev);
+			ret = 0;
+			break;
+		}
+		vfio_put_device(vdev);
+	}
+
+	fdput(fdev);
+	mutex_unlock(&kv->lock);
+	return ret;
+}
+
+static int kvm_vfio_set_device(struct kvm_device *dev, long attr,
+			       void __user *arg)
+{
+	switch (attr) {
+	case KVM_DEV_VFIO_DEVICE_TDI_BIND:
+		return kvm_dev_tsm_bind(dev, arg);
+	case KVM_DEV_VFIO_DEVICE_TDI_UNBIND:
+		return kvm_dev_tsm_unbind(dev, arg);
+	}
+
+	return -ENXIO;
+}
+
 static int kvm_vfio_set_attr(struct kvm_device *dev,
 			     struct kvm_device_attr *attr)
 {
@@ -304,6 +424,9 @@ static int kvm_vfio_set_attr(struct kvm_device *dev,
 	case KVM_DEV_VFIO_FILE:
 		return kvm_vfio_set_file(dev, attr->attr,
 					 u64_to_user_ptr(attr->addr));
+	case KVM_DEV_VFIO_DEVICE:
+		return kvm_vfio_set_device(dev, attr->attr,
+					   u64_to_user_ptr(attr->addr));
 	}
 
 	return -ENXIO;
@@ -324,6 +447,13 @@ static int kvm_vfio_has_attr(struct kvm_device *dev,
 		}
 
 		break;
+	case KVM_DEV_VFIO_DEVICE:
+		switch (attr->attr) {
+		case KVM_DEV_VFIO_DEVICE_TDI_BIND:
+		case KVM_DEV_VFIO_DEVICE_TDI_UNBIND:
+			return 0;
+		}
+		break;
 	}
 
 	return -ENXIO;
@@ -332,7 +462,15 @@ static int kvm_vfio_has_attr(struct kvm_device *dev,
 static void kvm_vfio_release(struct kvm_device *dev)
 {
 	struct kvm_vfio *kv = dev->private;
+	struct kvm_vfio_tdi *ktdi, *tmp2;
 	struct kvm_vfio_file *kvf, *tmp;
+
+	list_for_each_entry_safe(ktdi, tmp2, &kv->tdi_list, node) {
+		kvm_arch_tsm_unbind(dev->kvm, ktdi->vdev->dev);
+		list_del(&ktdi->node);
+		vfio_put_device(ktdi->vdev);
+		kfree(ktdi);
+	}
 
 	list_for_each_entry_safe(kvf, tmp, &kv->file_list, node) {
 #ifdef CONFIG_SPAPR_TCE_IOMMU
@@ -379,6 +517,7 @@ static int kvm_vfio_create(struct kvm_device *dev, u32 type)
 
 	INIT_LIST_HEAD(&kv->file_list);
 	mutex_init(&kv->lock);
+	INIT_LIST_HEAD(&kv->tdi_list);
 
 	dev->private = kv;
 
