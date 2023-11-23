@@ -2525,6 +2525,71 @@ e_free:
 	return ret;
 }
 
+static int snp_mmio_rmp_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct kvm_sev_snp_rmp_update params;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data), sizeof(params)))
+		return -EFAULT;
+
+	mmap_read_lock(kvm->mm);
+
+	struct vm_area_struct *vma = vma_lookup(kvm->mm, params.useraddr);
+
+	if (!vma || !(vma->vm_flags & VM_PFNMAP) ||
+	    vma->vm_end < params.useraddr + params.size) {
+		ret = -EFAULT;
+		goto unlock_exit;
+	}
+
+	for (phys_addr_t off = 0; off < params.size; off += PAGE_SIZE) {
+		struct follow_pfnmap_args args = {
+			.vma = vma,
+			.address = params.useraddr + off,
+		};
+
+		ret = follow_pfnmap_start(&args);
+		if (ret) {
+			/*
+			 * Very likely the first call will return -EINVAL as
+			 * !pte_present(pte). Although having "present" is not
+			 * exactly desirable here.
+			 */
+			ret = fixup_user_fault(kvm->mm, args.address,
+					       FAULT_FLAG_REMOTE, NULL);
+			if (!ret)
+				ret = follow_pfnmap_start(&args);
+			if (ret)
+				goto unlock_exit;
+		}
+
+		u64 pfn = args.pfn;
+
+		follow_pfnmap_end(&args);
+
+		if (params.flags & KVM_SEV_SNP_RMP_FLAG_PRIVATE)
+			ret = rmp_make_private_mmio(pfn, params.gpa + off, PG_LEVEL_4K,
+						    sev->asid, false/*Immutable*/);
+		else
+			ret = rmp_make_shared_mmio(pfn, PG_LEVEL_4K);
+		if (ret)
+			break;
+	}
+
+unlock_exit:
+	mmap_read_unlock(kvm->mm);
+
+	return ret;
+}
+
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -2629,6 +2694,9 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_LAUNCH_FINISH:
 		r = snp_launch_finish(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_MMIO_RMP_UPDATE:
+		r = snp_mmio_rmp_update(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
