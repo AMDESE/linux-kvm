@@ -749,6 +749,8 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
 int sev_gmem_prepare(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, int max_order);
 void sev_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
 int sev_private_max_mapping_level(struct kvm *kvm, kvm_pfn_t pfn);
+int sev_tsm_bind(struct kvm *kvm, struct device *dev, u32 guest_rid);
+void sev_tsm_unbind(struct kvm *kvm, struct device *dev);
 #else
 static inline struct page *snp_safe_alloc_page_node(int node, gfp_t gfp)
 {
