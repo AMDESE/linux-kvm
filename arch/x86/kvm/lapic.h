@@ -214,6 +214,9 @@ extern struct static_key_false_deferred apic_sw_disabled;
 
 static inline bool kvm_apic_sw_enabled(struct kvm_lapic *apic)
 {
+	if (apic->secure_avic_active)
+		return true;
+
 	if (static_branch_unlikely(&apic_sw_disabled.key))
 		return apic->sw_enabled;
 	return true;
