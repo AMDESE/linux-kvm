@@ -12,6 +12,7 @@
 #ifndef __PSP_SEV_H__
 #define __PSP_SEV_H__
 
+#include <linux/tsm.h>
 #include <uapi/linux/psp-sev.h>
 
 #define SEV_FW_BLOB_MAX_SIZE	0x4000	/* 16KB */
@@ -109,6 +110,27 @@ enum sev_cmd {
 	SEV_CMD_SNP_VLEK_LOAD		= 0x0CD,
 	SEV_CMD_SNP_FEATURE_INFO	= 0x0CE,
 
+	/* SEV-TIO commands */
+	SEV_CMD_TIO_STATUS		= 0xD0,
+	SEV_CMD_TIO_INIT		= 0xD1,
+	SEV_CMD_TIO_DEV_CREATE		= 0xD2,
+	SEV_CMD_TIO_DEV_RECLAIM		= 0xD3,
+	SEV_CMD_TIO_DEV_CONNECT		= 0xD4,
+	SEV_CMD_TIO_DEV_DISCONNECT	= 0xD5,
+	SEV_CMD_TIO_DEV_STATUS		= 0xD6,
+	SEV_CMD_TIO_DEV_MEASUREMENTS	= 0xD7,
+	SEV_CMD_TIO_DEV_CERTIFICATES	= 0xD8,
+	SEV_CMD_TIO_TDI_CREATE		= 0xDA,
+	SEV_CMD_TIO_TDI_RECLAIM		= 0xDB,
+	SEV_CMD_TIO_TDI_BIND		= 0xDC,
+	SEV_CMD_TIO_TDI_UNBIND		= 0xDD,
+	SEV_CMD_TIO_TDI_REPORT		= 0xDE,
+	SEV_CMD_TIO_TDI_STATUS		= 0xDF,
+	SEV_CMD_TIO_GUEST_REQUEST	= 0xE0,
+	SEV_CMD_TIO_ASID_FENCE_CLEAR	= 0xE1,
+	SEV_CMD_TIO_ASID_FENCE_STATUS	= 0xE2,
+	SEV_CMD_TIO_TDI_INFO		= 0xE3,
+	SEV_CMD_TIO_ROLL_KEY		= 0xE4,
 	SEV_CMD_MAX,
 };
 
@@ -147,6 +169,7 @@ struct sev_data_init_ex {
 } __packed;
 
 #define SEV_INIT_FLAGS_SEV_ES	0x01
+#define SEV_INIT_FLAGS_SEV_TIO_EN	BIT(2)
 
 /**
  * struct sev_data_pek_csr - PEK_CSR command parameters
@@ -752,6 +775,11 @@ struct sev_data_snp_guest_request {
 	u64 res_paddr;				/* In */
 } __packed;
 
+struct tio_guest_request {
+	struct sev_data_snp_guest_request data;
+	int fw_err;
+};
+
 /**
  * struct sev_data_snp_init_ex - SNP_INIT_EX structure
  *
@@ -1006,5 +1034,32 @@ static inline void *snp_alloc_firmware_page(gfp_t mask)
 static inline void snp_free_firmware_page(void *addr) { }
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
+
+// Pack 3 fields into RDX
+// ........ ....GGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGGOOOO OOOO.rrr
+// Where:
+// 	G - guest physical address
+// 	O - order of 4K pages
+// 	r - range id == BAR
+#define MMIO_VALIDATE_GPA(r)	((r) & 0x000FFFFFFFFFF000ULL)
+#define MMIO_VALIDATE_LEN(r)	(1ULL << (12 + (((r) >> 4) & 0xFF)))
+#define MMIO_VALIDATE_RANGEID(r) ((r) & 0x7)
+#define MMIO_VALIDATE_RESERVED(r) ((r) & 0xFFF0000000000008ULL)
+
+struct tio_blob_table_entry {
+	guid_t guid;
+	u32 offset;
+	u32 length;
+};
+
+// Measurement’s blob: 5caa80c6-12ef-401a-b364-ec59a93abe3f 
+#define TIO_GUID_MEASUREMENTS \
+	GUID_INIT(0x5caa80c6, 0x12ef, 0x401a, 0xb3, 0x64, 0xec, 0x59, 0xa9, 0x3a, 0xbe, 0x3f)
+// Certificates blob: 078ccb75-2644-49e8-afe7-5686c5cf72f1 
+#define TIO_GUID_CERTIFICATES \
+	GUID_INIT(0x078ccb75, 0x2644, 0x49e8, 0xaf, 0xe7, 0x56, 0x86, 0xc5, 0xcf, 0x72, 0xf1)
+// Attestation report: 70dc5b0e-0cc0-4cd5-97bb-ff0ba25bf320
+#define TIO_GUID_REPORT \
+	GUID_INIT(0x70dc5b0e, 0x0cc0, 0x4cd5, 0x97, 0xbb, 0xff, 0x0b, 0xa2, 0x5b, 0xf3, 0x20)
 
 #endif	/* __PSP_SEV_H__ */

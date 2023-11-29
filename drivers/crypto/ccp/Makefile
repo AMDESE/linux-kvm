@@ -12,6 +12,8 @@ ccp-$(CONFIG_CRYPTO_DEV_SP_PSP) += psp-dev.o \
                                    sev-dev.o \
                                    tee-dev.o \
                                    platform-access.o \
+				   sev-dev-tio.o \
+				   sev-dev-tsm.o \
                                    dbc.o
 
 obj-$(CONFIG_CRYPTO_DEV_CCP_CRYPTO) += ccp-crypto.o

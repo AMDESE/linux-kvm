@@ -36,6 +36,7 @@
 
 #include "psp-dev.h"
 #include "sev-dev.h"
+#include "sev-dev-tio.h"
 
 #define DEVICE_NAME		"sev"
 #define SEV_FW_FILE		"amd/sev.fw"
@@ -224,7 +225,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_SNP_CONFIG:		return sizeof(struct sev_user_data_snp_config);
 	case SEV_CMD_SNP_COMMIT:		return sizeof(struct sev_data_snp_commit);
 	case SEV_CMD_SNP_FEATURE_INFO:		return sizeof(struct sev_data_snp_feature_info);
-	default:				return 0;
+	default:				return sev_tio_cmd_buffer_len(cmd);
 	}
 
 	return 0;
@@ -1031,7 +1032,7 @@ static int __sev_init_ex_locked(int *error)
 		 */
 		data.tmr_address = __pa(sev_es_tmr);
 
-		data.flags |= SEV_INIT_FLAGS_SEV_ES;
+		data.flags |= SEV_INIT_FLAGS_SEV_ES | SEV_INIT_FLAGS_SEV_TIO_EN;
 		data.tmr_len = sev_es_tmr_size;
 	}
 
@@ -2485,6 +2486,10 @@ void sev_pci_init(void)
 
 	atomic_notifier_chain_register(&panic_notifier_list,
 				       &snp_panic_notifier);
+
+	if (cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		sev_tsm_set_ops(true);
+
 	return;
 
 err:
@@ -2498,6 +2503,7 @@ void sev_pci_exit(void)
 	if (!sev)
 		return;
 
+	sev_tsm_set_ops(false);
 	sev_firmware_shutdown(sev);
 
 	atomic_notifier_chain_unregister(&panic_notifier_list,
