@@ -67,4 +67,6 @@ void sev_pci_exit(void);
 
 bool sev_version_greater_or_equal(u8 maj, u8 min);
 
+void sev_tsm_set_ops(bool set);
+
 #endif /* __SEV_DEV_H */

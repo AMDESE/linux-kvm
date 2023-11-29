@@ -11,6 +11,8 @@ ccp-$(CONFIG_PCI) += sp-pci.o
 ccp-$(CONFIG_CRYPTO_DEV_SP_PSP) += psp-dev.o \
                                    sev-dev.o \
                                    tee-dev.o \
+				   sev-dev-tio.o \
+				   sev-dev-tsm.o \
                                    platform-access.o \
                                    dbc.o \
                                    hsti.o

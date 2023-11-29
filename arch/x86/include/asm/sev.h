@@ -138,6 +138,14 @@ enum msg_type {
 	SNP_MSG_ABSORB_RSP,
 	SNP_MSG_VMRK_REQ,
 	SNP_MSG_VMRK_RSP,
+	TIO_MSG_TDI_INFO_REQ        = 0x81,
+	TIO_MSG_TDI_INFO_RSP        = 0x01,
+	TIO_MSG_MMIO_VALIDATE_REQ   = 0x82,
+	TIO_MSG_MMIO_VALIDATE_RSP   = 0x02,
+	TIO_MSG_MMIO_CONFIG_REQ     = 0x83,
+	TIO_MSG_MMIO_CONFIG_RSP     = 0x03,
+	TIO_MSG_SDTE_WRITE_REQ      = 0x84,
+	TIO_MSG_SDTE_WRITE_RSP      = 0x04,
 
 	SNP_MSG_TYPE_MAX
 };
@@ -170,6 +178,18 @@ struct snp_guest_msg {
 struct sev_guest_platform_data {
 	u64 secrets_gpa;
 };
+
+/* SPDM algorithms used for TDISP, used in TIO_MSG_TDI_INFO_REQ */
+#define TIO_SPDM_ALGOS_DHE_SECP256R1			0
+#define TIO_SPDM_ALGOS_DHE_SECP384R1			1
+#define TIO_SPDM_ALGOS_AEAD_AES_128_GCM			(0<<8)
+#define TIO_SPDM_ALGOS_AEAD_AES_256_GCM			(1<<8)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_RSASSA_3072		(0<<16)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P256	(1<<16)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P384	(2<<16)
+#define TIO_SPDM_ALGOS_HASH_TPM_ALG_SHA_256		(0<<24)
+#define TIO_SPDM_ALGOS_HASH_TPM_ALG_SHA_384		(1<<24)
+#define TIO_SPDM_ALGOS_KEY_SCHED_SPDM_KEY_SCHEDULE	(0ULL<<32)
 
 /*
  * The secrets page contains 96-bytes of reserved field that can be used by
