@@ -124,6 +124,10 @@ config PCI_ATS
 config PCI_DOE
 	bool
 
+config PCI_IDE
+	tristate
+	default m
+
 config PCI_ECAM
 	bool
 
