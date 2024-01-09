@@ -1029,6 +1029,13 @@ static int perf_ibs_handle_irq(struct perf_ibs *perf_ibs, struct pt_regs *iregs)
 	unsigned int msr;
 	u64 *buf, *config, period, new_config = 0;
 
+	/*
+	 * When IBS PMU is in passthrough mode and NMI is received from the
+	 * host, perf_ibs_handle_irq handler should mark the NMI as handled.
+	 */
+	if (perf_is_in_guest_passthrough())
+			return 1;
+
 	if (!test_bit(IBS_STARTED, pcpu->state)) {
 fail:
 		/*
