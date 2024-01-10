@@ -6997,10 +6997,27 @@ void kvm_arch_flush_shadow_all(struct kvm *kvm)
 	kvm_mmu_zap_all(kvm);
 }
 
+static void kvm_mmu_zap_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
+{
+	bool flush = true;
+
+	/* Zapping non-leaf SPTEs, a.k.a. not-last SPTEs, isn't required. */
+	read_lock(&kvm->mmu_lock);
+
+	flush = kvm_tdp_mmu_zap_leafs(kvm, slot->base_gfn, slot->base_gfn + slot->npages - 1, true);
+	if (flush)
+		kvm_flush_remote_tlbs(kvm);
+
+	read_unlock(&kvm->mmu_lock);
+}
+
 void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
 				   struct kvm_memory_slot *slot)
 {
-	kvm_mmu_zap_all_fast(kvm);
+	if (kvm->arch.vm_type != KVM_X86_SNP_VM)
+		kvm_mmu_zap_all_fast(kvm);
+	else
+		kvm_mmu_zap_memslot(kvm, slot);
 }
 
 void kvm_mmu_invalidate_mmio_sptes(struct kvm *kvm, u64 gen)
