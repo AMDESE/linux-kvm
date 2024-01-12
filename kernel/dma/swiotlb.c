@@ -365,6 +365,7 @@ void __init swiotlb_init_remap(bool addressing_limit, unsigned int flags,
 
 	io_tlb_default_mem.force_bounce =
 		swiotlb_force_bounce || (flags & SWIOTLB_FORCE);
+	io_tlb_default_mem.for_alloc = (flags & SWIOTLB_ALLOC);
 
 #ifdef CONFIG_SWIOTLB_DYNAMIC
 	if (!remap)
@@ -1744,8 +1745,6 @@ static inline void swiotlb_create_debugfs_files(struct io_tlb_mem *mem,
 
 #endif	/* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_DMA_RESTRICTED_POOL
-
 struct page *swiotlb_alloc(struct device *dev, size_t size)
 {
 	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
@@ -1786,6 +1785,8 @@ bool swiotlb_free(struct device *dev, struct page *page, size_t size)
 
 	return true;
 }
+
+#ifdef CONFIG_DMA_RESTRICTED_POOL
 
 static int rmem_swiotlb_device_init(struct reserved_mem *rmem,
 				    struct device *dev)
