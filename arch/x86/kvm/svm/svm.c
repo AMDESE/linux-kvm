@@ -3785,6 +3785,9 @@ bool svm_nmi_blocked(struct kvm_vcpu *vcpu)
 	struct vcpu_svm *svm = to_svm(vcpu);
 	struct vmcb *vmcb = svm->vmcb;
 
+	if (vcpu->arch.apic->secure_avic_active)
+		return false;
+
 	if (!gif_set(svm))
 		return true;
 
