@@ -10460,7 +10460,7 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
 	 * to re-inject a previous event.  See above comments on re-injecting
 	 * for why pending exceptions get priority.
 	 */
-	can_inject = !kvm_event_needs_reinjection(vcpu);
+	can_inject = !kvm_event_needs_reinjection(vcpu) || vcpu->arch.apic->secure_avic_active;
 
 	if (vcpu->arch.exception.pending) {
 		/*
@@ -10546,7 +10546,15 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
 		if (r < 0)
 			goto out;
 		if (r) {
-			int irq = kvm_cpu_get_interrupt(vcpu);
+			int irq = 0;
+
+			/*
+			 * Do not invoke kvm_cpu_get_interrupt() for Secure AVIC as it clears the
+			 * IRR. Invoke kvm_queue_interrupt() still to set
+			 * vcpu->arch.interrupt.injected, though the vector itself is not used.
+			 */
+			if (!vcpu->arch.apic->secure_avic_active)
+				irq = kvm_cpu_get_interrupt(vcpu);
 
 			if (!WARN_ON_ONCE(irq == -1)) {
 				kvm_queue_interrupt(vcpu, irq, false);

@@ -49,6 +49,8 @@
 #include "svm.h"
 #include "svm_ops.h"
 
+#include "lapic.h"
+
 #include "kvm_onhyperv.h"
 #include "svm_onhyperv.h"
 
@@ -896,12 +898,13 @@ void svm_vcpu_init_msrpm(struct kvm_vcpu *vcpu, u32 *msrpm)
 
 void svm_set_x2apic_msr_interception(struct vcpu_svm *svm, bool intercept)
 {
+	struct kvm_vcpu *vcpu = &svm->vcpu;
 	int i;
 
 	if (intercept == svm->x2avic_msrs_intercepted)
 		return;
 
-	if (!x2avic_enabled)
+	if (!x2avic_enabled || !vcpu->arch.apic->secure_avic_active)
 		return;
 
 	for (i = 0; i < MAX_DIRECT_ACCESS_MSRS; i++) {
@@ -3651,6 +3654,9 @@ static void svm_inject_irq(struct kvm_vcpu *vcpu, bool reinjected)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 	u32 type;
+
+	if (vcpu->arch.apic->secure_avic_active)
+		return sev_secure_avic_set_requested_irr(svm, reinjected);
 
 	if (vcpu->arch.interrupt.soft) {
 		if (svm_update_soft_interrupt_rip(vcpu))

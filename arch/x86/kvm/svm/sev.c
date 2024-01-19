@@ -5026,3 +5026,24 @@ int sev_private_max_mapping_level(struct kvm *kvm, kvm_pfn_t pfn)
 
 	return level;
 }
+
+void sev_secure_avic_set_requested_irr(struct vcpu_svm *svm, bool reinjected)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm_lapic *apic = vcpu->arch.apic;
+	u32 val;
+	int i;
+
+	/* Secure AVIC HW takes care of re-injection */
+	if (reinjected)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(svm->vmcb->control.requested_irr); i++) {
+		val = __kvm_lapic_get_reg(apic->regs, APIC_IRR + (i * 0x10));
+		svm->vmcb->control.requested_irr[i] |= val;
+
+		kvm_lapic_set_reg(apic, APIC_IRR + (i * 0x10), 0);
+	}
+
+	svm->vmcb->control.update_irr |= BIT(0);
+}

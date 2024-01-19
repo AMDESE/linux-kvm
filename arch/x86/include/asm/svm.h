@@ -158,9 +158,13 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 	u64 avic_physical_id;	/* Offset 0xf8 */
 	u8 reserved_7[8];
 	u64 vmsa_pa;		/* Used for an SEV-ES guest */
-	u8 reserved_8[40];
+	u8 reserved_8[36];
+	u8 update_irr;			/* Offset 0x134 */
+	u8 reserved_9[3];
 	u64 allowed_sev_features;	/* Offset 0x138 */
-	u8 reserved_9[672];
+	u8 reserved_10[16];
+	u32 requested_irr[8];		/* Offset 0x150 */
+	u8 reserved_11[624];
 	/*
 	 * Offset 0x3e0, 32 bytes reserved
 	 * for use by hypervisor/software.
@@ -213,6 +217,9 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 
 #define X2APIC_MODE_SHIFT 30
 #define X2APIC_MODE_MASK (1 << X2APIC_MODE_SHIFT)
+
+#define VINTR_CTRL_INT_SHADOW_SHIFT 10
+#define VINTR_CTRL_INT_SHADOW_MASK (1 << VINTR_CTRL_INT_SHADOW_SHIFT)
 
 #define LBR_CTL_ENABLE_MASK BIT_ULL(0)
 #define VIRTUAL_VMLOAD_VMSAVE_ENABLE_MASK BIT_ULL(1)

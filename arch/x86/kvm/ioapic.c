@@ -226,7 +226,7 @@ static int ioapic_set_irq(struct kvm_ioapic *ioapic, unsigned int irq,
 	 * to receive the EOI.  In this case, we do a lazy update of the
 	 * pending EOI when trying to set IOAPIC irq.
 	 */
-	if (edge && kvm_apicv_activated(ioapic->kvm))
+	if (edge && (kvm_apicv_activated(ioapic->kvm) || ioapic->kvm->arch.secure_avic_enabled))
 		ioapic_lazy_update_eoi(ioapic, irq);
 
 	/*
