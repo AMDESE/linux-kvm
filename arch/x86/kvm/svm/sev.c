@@ -4291,6 +4291,49 @@ out_terminate:
 	return 0;
 }
 
+int sev_savic_send_ipi(struct kvm_vcpu *kvm_vcpu, u64 icr)
+{
+	struct kvm *kvm = kvm_vcpu->kvm;
+	struct kvm_lapic *apic;
+	struct kvm_vcpu *vcpu;
+	u32 icr_low, icr_high;
+	bool in_guest_mode;
+	unsigned long i;
+
+	icr_low = lower_32_bits(icr);
+	icr_high = upper_32_bits(icr);
+
+	/*
+	 * TODO: Instead of scanning all the vCPUS, get fastpath working which should look similar
+	 * to avic_kick_target_vcpus_fast().
+	 */
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		if (!kvm_apic_match_dest(vcpu, kvm_vcpu->arch.apic, icr_low & APIC_SHORT_MASK,
+					 icr_high, icr_low & APIC_DEST_MASK))
+			continue;
+
+		/* Pairs with smp_store_release in vcpu_enter_guest. */
+		in_guest_mode = (smp_load_acquire(&vcpu->mode) == IN_GUEST_MODE);
+		if (in_guest_mode) {
+			/*
+			 * Signal the doorbell to tell hardware to inject the IRQ.
+			 * TODO: If the vCPU exits the guest before the doorbell chimes,
+			 * how to queue the interrupt again.
+			 */
+			avic_ring_doorbell(vcpu);
+		} else {
+			/*
+			 * Wake the vCPU if it was blocking.
+			 */
+			apic = vcpu->arch.apic;
+			apic->ipi_pending = true;
+			kvm_vcpu_kick(vcpu);
+		}
+	}
+
+	return 0;
+}
+
 int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -5045,5 +5088,6 @@ void sev_secure_avic_set_requested_irr(struct vcpu_svm *svm, bool reinjected)
 		kvm_lapic_set_reg(apic, APIC_IRR + (i * 0x10), 0);
 	}
 
+	apic->ipi_pending = false;
 	svm->vmcb->control.update_irr |= BIT(0);
 }

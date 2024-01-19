@@ -65,6 +65,7 @@ struct kvm_lapic {
 	bool secure_avic_active;
 	bool sw_enabled;
 	bool irr_pending;
+	bool ipi_pending;
 	bool lvt0_in_nmi_mode;
 	/* Number of bits set in ISR. */
 	s16 isr_count;

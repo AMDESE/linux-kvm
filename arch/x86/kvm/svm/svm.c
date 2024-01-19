@@ -5061,6 +5061,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.refresh_apicv_exec_ctrl = avic_refresh_apicv_exec_ctrl,
 	.apicv_post_state_restore = avic_apicv_post_state_restore,
 	.required_apicv_inhibits = AVIC_REQUIRED_APICV_INHIBITS,
+	.savic_send_ipi = sev_savic_send_ipi,
 
 	.get_exit_info = svm_get_exit_info,
 

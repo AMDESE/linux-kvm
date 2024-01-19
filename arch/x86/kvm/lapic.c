@@ -2899,6 +2899,10 @@ int kvm_apic_has_interrupt(struct kvm_vcpu *vcpu)
 	if (!kvm_apic_present(vcpu))
 		return -1;
 
+	/* Added for the HLT vCPU to wakeup */
+	if (apic->ipi_pending)
+		return true;
+
 	__apic_update_ppr(apic, &ppr);
 	return apic_has_interrupt_for_ppr(apic, ppr);
 }
@@ -3201,6 +3205,8 @@ int kvm_lapic_set_vapic_addr(struct kvm_vcpu *vcpu, gpa_t vapic_addr)
 
 int kvm_x2apic_icr_write(struct kvm_lapic *apic, u64 data)
 {
+	if (apic->secure_avic_active)
+		return static_call(kvm_x86_savic_send_ipi)(apic->vcpu, data);
 	data &= ~APIC_ICR_BUSY;
 
 	kvm_apic_send_ipi(apic, (u32)data, (u32)(data >> 32));
