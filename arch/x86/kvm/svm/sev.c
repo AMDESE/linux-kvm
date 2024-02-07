@@ -3403,6 +3403,8 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		    !kvm_ghcb_rcx_is_valid(svm))
 			goto vmgexit_err;
 		break;
+	case SVM_VMGEXIT_SECURE_AVIC_GPA:
+		break;
 	case SVM_VMGEXIT_MMIO_READ:
 	case SVM_VMGEXIT_MMIO_WRITE:
 		if (!kvm_ghcb_sw_scratch_is_valid(svm))
@@ -4336,6 +4338,11 @@ int sev_savic_send_ipi(struct kvm_vcpu *kvm_vcpu, u64 icr)
 	return 0;
 }
 
+static void sev_handle_secure_avic_psmash_gpa(struct vcpu_svm *svm, gpa_t gpa)
+{
+	sev_handle_rmp_fault(&svm->vcpu, gpa, 0);
+}
+
 int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4477,6 +4484,10 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 			    "vmgexit: unsupported event - exit_info_1=%#llx, exit_info_2=%#llx\n",
 			    control->exit_info_1, control->exit_info_2);
 		ret = -EINVAL;
+		break;
+	case SVM_VMGEXIT_SECURE_AVIC_GPA:
+		sev_handle_secure_avic_psmash_gpa(svm, control->exit_info_1);
+		ret = 1;
 		break;
 	default:
 		ret = svm_invoke_exit_handler(vcpu, exit_code);
