@@ -77,6 +77,11 @@ enum {
 /* TPR and CR2 are always written before VMRUN */
 #define VMCB_ALWAYS_DIRTY_MASK	((1U << VMCB_INTR) | (1U << VMCB_CR2))
 
+#define KVM_SEV_SNP_SECURE_AVIC		BIT_ULL(2)
+
+/* Supported init feature flags */
+#define SEV_SNP_SUPPORTED_FLAGS		KVM_SEV_SNP_SECURE_AVIC
+
 struct kvm_sev_info {
 	bool active;		/* SEV enabled guest */
 	bool es_active;		/* SEV-ES enabled guest */

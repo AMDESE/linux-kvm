@@ -58,6 +58,10 @@ static bool sev_es_debug_swap_enabled = true;
 module_param_named(debug_swap, sev_es_debug_swap_enabled, bool, 0444);
 static u64 sev_supported_vmsa_features;
 
+/* enable/disable SEV-SNP SecureAvic support */
+bool sev_snp_secure_avic_enabled = true;
+module_param_named(secure_avic, sev_snp_secure_avic_enabled, bool, 0444);
+
 #define AP_RESET_HOLD_NONE		0
 #define AP_RESET_HOLD_NAE_EVENT		1
 #define AP_RESET_HOLD_MSR_PROTO		2
@@ -437,8 +441,10 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 	if (sev->es_active && !sev->ghcb_version)
 		sev->ghcb_version = GHCB_VERSION_DEFAULT;
 
-	if (vm_type == KVM_X86_SNP_VM)
+	if (vm_type == KVM_X86_SNP_VM) {
 		sev->vmsa_features |= SVM_SEV_FEAT_SNP_ACTIVE;
+		kvm->arch.secure_avic_enabled = sev_snp_secure_avic_enabled;
+	}
 
 	ret = sev_asid_new(sev);
 	if (ret)
@@ -2966,6 +2972,7 @@ void __init sev_set_cpu_caps(void)
 void __init sev_hardware_setup(void)
 {
 	unsigned int eax, ebx, ecx, edx, sev_asid_count, sev_es_asid_count;
+	bool secure_avic_supported = false;
 	bool sev_snp_supported = false;
 	bool sev_es_supported = false;
 	bool sev_supported = false;
@@ -3054,7 +3061,11 @@ void __init sev_hardware_setup(void)
 	WARN_ON_ONCE(misc_cg_set_capacity(MISC_CG_RES_SEV_ES, sev_es_asid_count));
 	sev_es_supported = true;
 	sev_snp_supported = sev_snp_enabled && cc_platform_has(CC_ATTR_HOST_SEV_SNP);
-
+	if (sev_snp_supported) {
+		secure_avic_supported = sev_snp_secure_avic_enabled &&
+			cpu_feature_enabled(X86_FEATURE_SECURE_AVIC);
+		pr_info("Secure AVIC %s Supported\n", secure_avic_supported ? "" : "Not");
+	}
 out:
 	if (boot_cpu_has(X86_FEATURE_SEV))
 		pr_info("SEV %s (ASIDs %u - %u)\n",
@@ -3071,9 +3082,16 @@ out:
 			sev_snp_supported ? "enabled" : "disabled",
 			min_sev_asid > 1 ? 1 : 0, min_sev_asid - 1);
 
+	if (sev_snp_supported) {
+		secure_avic_supported = sev_snp_secure_avic_enabled &&
+					cpu_feature_enabled(X86_FEATURE_SECURE_AVIC);
+		pr_info("Secure AVIC %s Supported\n", secure_avic_supported ? "" : "Not");
+	}
+
 	sev_enabled = sev_supported;
 	sev_es_enabled = sev_es_supported;
 	sev_snp_enabled = sev_snp_supported;
+	sev_snp_secure_avic_enabled = secure_avic_supported;
 
 	if (!sev_es_enabled || !cpu_feature_enabled(X86_FEATURE_DEBUG_SWAP) ||
 	    !cpu_feature_enabled(X86_FEATURE_NO_NESTED_DATA_BP))

@@ -62,6 +62,7 @@ struct kvm_lapic {
 	u32 divide_count;
 	struct kvm_vcpu *vcpu;
 	bool apicv_active;
+	bool secure_avic_active;
 	bool sw_enabled;
 	bool irr_pending;
 	bool lvt0_in_nmi_mode;

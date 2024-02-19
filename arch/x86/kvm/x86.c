@@ -12208,6 +12208,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
 
 int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 {
+	struct kvm *kvm = vcpu->kvm;
 	struct page *page;
 	int r;
 
@@ -12229,6 +12230,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	r = kvm_create_lapic(vcpu);
 	if (r < 0)
 		goto fail_mmu_destroy;
+	vcpu->arch.apic->secure_avic_active = kvm->arch.secure_avic_enabled;
 
 	r = -ENOMEM;
 

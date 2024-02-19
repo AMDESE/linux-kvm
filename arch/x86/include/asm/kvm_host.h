@@ -1350,6 +1350,7 @@ struct kvm_arch {
 
 	bool apic_access_memslot_enabled;
 	bool apic_access_memslot_inhibited;
+	bool secure_avic_enabled;
 
 	/* Protects apicv_inhibit_reasons */
 	struct rw_semaphore apicv_update_lock;
