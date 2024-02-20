@@ -858,6 +858,8 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	save->dr6  = svm->vcpu.arch.dr6;
 
 	save->sev_features = sev->vmsa_features;
+	if (svm->vcpu.arch.apic->secure_avic_active)
+		save->vintr_ctrl |= V_GIF_MASK;
 
 	/*
 	 * Skip FPU and AVX setup with KVM_SEV_ES_INIT to avoid
