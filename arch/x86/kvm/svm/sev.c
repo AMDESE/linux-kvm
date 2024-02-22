@@ -4624,8 +4624,10 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 	set_msr_interception(vcpu, svm->msrpm, MSR_EFER, 1, 1);
 	set_msr_interception(vcpu, svm->msrpm, MSR_IA32_CR_PAT, 1, 1);
 
-	if (vcpu->arch.apic->secure_avic_active)
+	if (vcpu->arch.apic->secure_avic_active) {
 		set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_SECURE_AVIC_CONTROL, 1, 1);
+		svm_set_x2apic_msr_interception(svm, true);
+	}
 }
 
 void sev_init_vmcb(struct vcpu_svm *svm)
