@@ -1080,6 +1080,49 @@ static int snp_filter_reserved_mem_regions(struct resource *rs, void *arg)
 	return 0;
 }
 
+static int snp_platform_status_locked(struct sev_device *sev,
+				      struct sev_user_data_snp_status *status,
+				      int *psp_ret)
+{
+	struct sev_data_snp_addr buf;
+	struct page *status_page;
+	void *data;
+	int ret;
+
+	status_page = alloc_page(GFP_KERNEL_ACCOUNT);
+	if (!status_page)
+		return -ENOMEM;
+
+	data = page_address(status_page);
+
+	/*
+	 * Firmware expects status page to be in firmware-owned state, otherwise
+	 * it will report firmware error code INVALID_PAGE_STATE (0x1A).
+	 * Skip if SNP is UNINIT.
+	 */
+	if (sev->snp_initialized && rmp_mark_pages_firmware(__pa(data), 1, true)) {
+		ret = -EFAULT;
+		goto cleanup;
+	}
+
+	buf.address = __psp_pa(data);
+	ret = __sev_do_cmd_locked(SEV_CMD_SNP_PLATFORM_STATUS, &buf, psp_ret);
+	if (!ret)
+		memcpy(status, data, sizeof(*status));
+
+	/*
+	 * Status page will be transitioned to Reclaim state upon success, or
+	 * left in Firmware state in failure. Use snp_reclaim_pages() to
+	 * transition either case back to Hypervisor-owned state.
+	 */
+	if (sev->snp_initialized && snp_reclaim_pages(__pa(data), 1, true))
+		ret = -EFAULT;
+
+cleanup:
+	__free_pages(status_page, 0);
+	return ret;
+}
+
 static int __sev_snp_init_locked(int *error)
 {
 	struct psp_device *psp = psp_master;
@@ -1948,51 +1991,21 @@ e_free_pdh:
 
 static int sev_ioctl_do_snp_platform_status(struct sev_issue_cmd *argp)
 {
+	struct sev_user_data_snp_status status = { 0 };
 	struct sev_device *sev = psp_master->sev_data;
-	struct sev_data_snp_addr buf;
-	struct page *status_page;
-	void *data;
 	int ret;
 
 	if (!sev->snp_initialized || !argp->data)
 		return -EINVAL;
 
-	status_page = alloc_page(GFP_KERNEL_ACCOUNT);
-	if (!status_page)
-		return -ENOMEM;
+	ret = snp_platform_status_locked(sev, &status, &argp->error);
+	if (ret)
+		return ret;
 
-	data = page_address(status_page);
-
-	/*
-	 * Firmware expects status page to be in firmware-owned state, otherwise
-	 * it will report firmware error code INVALID_PAGE_STATE (0x1A).
-	 */
-	if (rmp_mark_pages_firmware(__pa(data), 1, true)) {
-		ret = -EFAULT;
-		goto cleanup;
-	}
-
-	buf.address = __psp_pa(data);
-	ret = __sev_do_cmd_locked(SEV_CMD_SNP_PLATFORM_STATUS, &buf, &argp->error);
-
-	/*
-	 * Status page will be transitioned to Reclaim state upon success, or
-	 * left in Firmware state in failure. Use snp_reclaim_pages() to
-	 * transition either case back to Hypervisor-owned state.
-	 */
-	if (snp_reclaim_pages(__pa(data), 1, true))
+	if (copy_to_user((void __user *)argp->data, &status, sizeof(status)))
 		return -EFAULT;
 
-	if (ret)
-		goto cleanup;
-
-	if (copy_to_user((void __user *)argp->data, data,
-			 sizeof(struct sev_user_data_snp_status)))
-		ret = -EFAULT;
-
-cleanup:
-	__free_pages(status_page, 0);
-	return ret;
+	return 0;
 }
 
 static int sev_ioctl_do_snp_commit(struct sev_issue_cmd *argp)
