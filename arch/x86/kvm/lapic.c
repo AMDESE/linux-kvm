@@ -2277,6 +2277,8 @@ static int kvm_lapic_reg_write(struct kvm_lapic *apic, u32 reg, u32 val)
 	case APIC_ID:		/* Local APIC ID */
 		if (!apic_x2apic_mode(apic)) {
 			kvm_apic_set_xapic_id(apic, val >> 24);
+		} else if (apic->secure_avic_active) {
+			kvm_apic_set_x2apic_id(apic, val);
 		} else {
 			ret = 1;
 		}
