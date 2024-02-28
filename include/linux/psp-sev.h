@@ -107,6 +107,7 @@ enum sev_cmd {
 	SEV_CMD_SNP_DOWNLOAD_FIRMWARE_EX = 0x0CA,
 	SEV_CMD_SNP_COMMIT		= 0x0CB,
 	SEV_CMD_SNP_VLEK_LOAD		= 0x0CD,
+	SEV_CMD_SNP_FEATURE_INFO	= 0x0CE,
 
 	SEV_CMD_MAX,
 };
@@ -585,6 +586,25 @@ struct sev_data_snp_addr {
 } __packed;
 
 /**
+ * struct sev_data_snp_feature_info - SEV_CMD_SNP_FEATURE_INFO command params
+ *
+ * @len: length of this struct
+ * @ecx_in: subfunction index of CPUID Fn8000_0024
+ * @feature_info_paddr: physical address of a page with sev_snp_feature_info
+ */
+#define SNP_FEATURE_FN8000_0024_EBX_X00_SEVTIO	1
+
+struct sev_snp_feature_info {
+	u32 eax, ebx, ecx, edx;			/* Out */
+} __packed;
+
+struct sev_data_snp_feature_info {
+	u32 length;				/* In */
+	u32 ecx_in;				/* In */
+	u64 feature_info_paddr;			/* In */
+} __packed;
+
+/**
  * struct sev_data_snp_launch_start - SNP_LAUNCH_START command params
  *
  * @gctx_paddr: system physical address of guest context page
@@ -745,10 +765,14 @@ struct sev_data_snp_guest_request {
 struct sev_data_snp_init_ex {
 	u32 init_rmp:1;
 	u32 list_paddr_en:1;
-	u32 rsvd:30;
+	u32 rapl_dis:1;
+	u32 ciphertext_hiding_en:1;
+	u32 tio_en:1;
+	u32 rsvd:27;
 	u32 rsvd1;
 	u64 list_paddr;
-	u8  rsvd2[48];
+	u16 max_snp_asid;
+	u8  rsvd2[46];
 } __packed;
 
 /**
@@ -787,7 +811,8 @@ struct sev_data_range_list {
 struct sev_data_snp_shutdown_ex {
 	u32 len;
 	u32 iommu_snp_shutdown:1;
-	u32 rsvd1:31;
+	u32 x86_snp_shutdown:1;
+	u32 rsvd1:30;
 } __packed;
 
 /**
