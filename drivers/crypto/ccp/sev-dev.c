@@ -223,6 +223,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_SNP_GUEST_REQUEST:		return sizeof(struct sev_data_snp_guest_request);
 	case SEV_CMD_SNP_CONFIG:		return sizeof(struct sev_user_data_snp_config);
 	case SEV_CMD_SNP_COMMIT:		return sizeof(struct sev_data_snp_commit);
+	case SEV_CMD_SNP_FEATURE_INFO:		return sizeof(struct sev_data_snp_feature_info);
 	default:				return 0;
 	}
 
@@ -1123,6 +1124,77 @@ cleanup:
 	return ret;
 }
 
+static int snp_feature_info_locked(struct sev_device *sev, u32 ecx,
+				   struct sev_snp_feature_info *fi, int *psp_ret)
+{
+	struct sev_data_snp_feature_info buf = {
+		.length = sizeof(buf),
+		.ecx_in = ecx,
+	};
+	struct page *status_page;
+	void *data;
+	int ret;
+
+	status_page = alloc_page(GFP_KERNEL_ACCOUNT);
+	if (!status_page)
+		return -ENOMEM;
+
+	data = page_address(status_page);
+
+	if (sev->snp_initialized && rmp_mark_pages_firmware(__pa(data), 1, true)) {
+		ret = -EFAULT;
+		goto cleanup;
+	}
+
+	buf.feature_info_paddr = __psp_pa(data);
+	ret = __sev_do_cmd_locked(SEV_CMD_SNP_FEATURE_INFO, &buf, psp_ret);
+
+	if (sev->snp_initialized && snp_reclaim_pages(__pa(data), 1, true))
+		ret = -EFAULT;
+
+	if (!ret)
+		memcpy(fi, data, sizeof(*fi));
+
+cleanup:
+	__free_pages(status_page, 0);
+	return ret;
+}
+
+static int snp_get_feature_info(struct sev_device *sev, u32 ecx, struct sev_snp_feature_info *fi)
+{
+	struct sev_user_data_snp_status status = { 0 };
+	int psp_ret = 0, ret;
+
+	ret = snp_platform_status_locked(sev, &status, &psp_ret);
+	if (ret)
+		return ret;
+	if (ret != SEV_RET_SUCCESS)
+		return -EFAULT;
+	if (!status.feature_info)
+		return -ENOSYS;
+
+	ret = snp_feature_info_locked(sev, ecx, fi, &psp_ret);
+	if (ret)
+		return ret;
+	if (ret != SEV_RET_SUCCESS)
+		return -EFAULT;
+
+	return 0;
+}
+
+static bool sev_tio_present(struct sev_device *sev)
+{
+	struct sev_snp_feature_info fi = { 0 };
+	bool present;
+
+	if (snp_get_feature_info(sev, 0, &fi))
+		return false;
+
+	present = (fi.ebx & SNP_FEATURE_FN8000_0024_EBX_X00_SEVTIO) != 0;
+	dev_info(sev->dev, "SEV-TIO support is %s\n", present ? "present" : "not present");
+	return present;
+}
+
 static int __sev_snp_init_locked(int *error)
 {
 	struct psp_device *psp = psp_master;
@@ -1187,6 +1259,7 @@ static int __sev_snp_init_locked(int *error)
 		data.init_rmp = 1;
 		data.list_paddr_en = 1;
 		data.list_paddr = __psp_pa(snp_range_list);
+		data.tio_en = sev_tio_present(sev);
 		cmd = SEV_CMD_SNP_INIT_EX;
 	} else {
 		cmd = SEV_CMD_SNP_INIT;
