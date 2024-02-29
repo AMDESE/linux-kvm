@@ -1144,7 +1144,8 @@ out:
 		}
 		new_config |= period >> 4;
 
-		perf_ibs_enable_event(perf_ibs, hwc, new_config);
+		if (!test_bit(IBS_STOPPING, pcpu->state))
+			 perf_ibs_enable_event(perf_ibs, hwc, new_config);
 	}
 
 	perf_event_update_userpage(event);
