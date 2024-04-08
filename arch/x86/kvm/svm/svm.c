@@ -1220,6 +1220,9 @@ static inline void init_vmcb_after_set_cpuid(struct kvm_vcpu *vcpu)
 		/* No need to intercept these MSRs */
 		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_SYSENTER_EIP, 1, 1);
 		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_SYSENTER_ESP, 1, 1);
+
+		if (is_passthrough_pmu_enabled(vcpu))
+			svm_set_intercept(svm, INTERCEPT_RDPMC);
 	}
 }
 
