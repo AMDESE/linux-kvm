@@ -19,6 +19,11 @@
 /* Override for DMA direct allocation check - ARCH_HAS_FORCE_DMA_UNENCRYPTED */
 bool force_dma_unencrypted(struct device *dev)
 {
+	if (dev->tdi_enabled) {
+		dev_warn_once(dev, "(TIO) Disable decryption");
+		return false;
+	}
+
 	/*
 	 * For SEV, all DMA must be to unencrypted addresses.
 	 */
