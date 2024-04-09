@@ -94,6 +94,10 @@ static inline dma_addr_t phys_to_dma_unencrypted(struct device *dev,
  */
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
+	if (dev->tdi_enabled) {
+		dev_warn_once(dev, "(TIO) Disable SME");
+		return phys_to_dma_unencrypted(dev, paddr);
+	}
 	return __sme_set(phys_to_dma_unencrypted(dev, paddr));
 }
 
