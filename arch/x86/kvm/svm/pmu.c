@@ -170,6 +170,16 @@ static int amd_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		data &= ~pmu->reserved_bits;
 		if (is_passthrough_pmu_enabled(vcpu)) {
 			pmc->eventsel = data;
+			if (!check_pmu_event_filter(pmc)) {
+				/*
+				 * When guest request an invalid event,
+				 * stop the counter by clearing the
+				 * event selector MSR.
+				 */
+				pmc->eventsel_hw = 0;
+				pmc->eventsel &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
+				return 0;
+			}
 			data &= ~AMD64_EVENTSEL_HOSTONLY;
 			pmc->eventsel_hw = data | AMD64_EVENTSEL_GUESTONLY;
 		} else if (data != pmc->eventsel) {
