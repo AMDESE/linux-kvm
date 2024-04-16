@@ -82,6 +82,7 @@ static int set_sel(struct pci_dev *pdev, unsigned sel_index, u32 value)
 
 	/* Selective IDE Stream Control Register */
 	pci_write_config_dword(pdev, offset + 4, value);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:Ctl\n", offset + 4, value, sel_index);
 	return 0;
 }
 
@@ -115,8 +116,10 @@ int pci_ide_set_sel_rid_assoc(struct pci_dev *pdev, unsigned sel_index,
 
 	/* IDE RID Association Register 1 */
 	pci_write_config_dword(pdev, offset + 0xC, rid1);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:RID1\n", offset + 0xC, rid1, sel_index);
 	/* IDE RID Association Register 2 */
 	pci_write_config_dword(pdev, offset + 0x10, rid2);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:RID2\n", offset + 0x10, rid2, sel_index);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pci_ide_set_sel_rid_assoc);
@@ -138,10 +141,13 @@ int pci_ide_set_sel_addr_assoc(struct pci_dev *pdev, unsigned sel_index, unsigne
 
 	/* IDE Address Association Register 1 */
 	pci_write_config_dword(pdev, offset_ab, a1);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:%d:A1\n", offset_ab, a1, sel_index, blocknum);
 	/* IDE Address Association Register 2 */
 	pci_write_config_dword(pdev, offset_ab + 4, a2);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:%d:A2\n", offset_ab + 4, a2, sel_index, blocknum);
 	/* IDE Address Association Register 1 */
 	pci_write_config_dword(pdev, offset_ab + 8, a3);
+	pci_info(pdev, "[%x] Writing %x to sel#%d:%d:A3\n", offset_ab + 8, a3, sel_index, blocknum);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pci_ide_set_sel_addr_assoc);
@@ -161,6 +167,7 @@ int pci_ide_get_sel_sta(struct pci_dev *pdev, unsigned sel_index, u32 *status)
 		return ret;
 
 	*status = s;
+	pci_info(pdev, "[%x] Status %x of sel#%d:Sta\n", offset + 8, *status, sel_index);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pci_ide_get_sel_sta);
