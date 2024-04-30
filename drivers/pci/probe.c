@@ -1930,6 +1930,11 @@ static int pci_intx_mask_broken(struct pci_dev *dev)
 {
 	u16 orig, toggle, new;
 
+	if (dev->devcap & PCI_EXP_DEVCAP_TEE) {
+		pci_warn_once(dev, "(TIO) Disable check for broken INTX");
+		return 1;
+	}
+
 	pci_read_config_word(dev, PCI_COMMAND, &orig);
 	toggle = orig ^ PCI_COMMAND_INTX_DISABLE;
 	pci_write_config_word(dev, PCI_COMMAND, toggle);
