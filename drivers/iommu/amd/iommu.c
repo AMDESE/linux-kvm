@@ -1930,7 +1930,20 @@ static void set_dte_entry(struct amd_iommu *iommu,
 	}
 
 	flags &= ~DEV_DOMID_MASK;
-	flags |= domid;
+
+	if (dev_data->dev->tdi_enabled && (domain->flags & IOMMU_HWPT_TRUSTED)) {
+		/*
+		 * Do hack for VFIO with TSM enabled.
+		 * This runs when VFIO is being bound to a device and before TDI is bound.
+		 * Ideally TSM should change DTE only when TDI is bound.
+		 * Probably better test for (domain->domain.type & __IOMMU_DOMAIN_DMA_API)
+		 */
+		dev_info(dev_data->dev, "Skip DomainID=%x and set bit96\n", domid);
+		flags |= 1ULL << (96 - 64);
+	} else {
+		//dev_info(dev_data->dev, "Not skip DomainID=%x and not set bit96\n", domid);
+		flags |= domid;
+	}
 
 	old_domid = dev_table[devid].data[1] & DEV_DOMID_MASK;
 	dev_table[devid].data[1]  = flags;
@@ -2413,6 +2426,8 @@ static struct iommu_domain *do_iommu_domain_alloc(unsigned int type,
 
 		if (dirty_tracking)
 			domain->domain.dirty_ops = &amd_dirty_ops;
+
+		domain->flags = flags;
 	}
 
 	return &domain->domain;
@@ -2437,7 +2452,7 @@ amd_iommu_domain_alloc_user(struct device *dev, u32 flags,
 {
 	unsigned int type = IOMMU_DOMAIN_UNMANAGED;
 
-	if ((flags & ~IOMMU_HWPT_ALLOC_DIRTY_TRACKING) || parent || user_data)
+	if ((flags & ~(IOMMU_HWPT_ALLOC_DIRTY_TRACKING | IOMMU_HWPT_TRUSTED)) || parent || user_data)
 		return ERR_PTR(-EOPNOTSUPP);
 
 	return do_iommu_domain_alloc(type, dev, flags);

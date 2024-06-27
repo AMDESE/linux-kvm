@@ -128,6 +128,10 @@ iommufd_hwpt_paging_alloc(struct iommufd_ctx *ictx, struct iommufd_ioas *ioas,
 	hwpt_paging->nest_parent = flags & IOMMU_HWPT_ALLOC_NEST_PARENT;
 
 	if (ops->domain_alloc_user) {
+		if (ictx->kvm) {
+			pr_info("Trusted domain");
+			flags |= IOMMU_HWPT_TRUSTED;
+		}
 		hwpt->domain = ops->domain_alloc_user(idev->dev, flags, NULL,
 						      user_data);
 		if (IS_ERR(hwpt->domain)) {

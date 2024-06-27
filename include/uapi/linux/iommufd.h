@@ -361,6 +361,7 @@ struct iommu_vfio_ioas {
 enum iommufd_hwpt_alloc_flags {
 	IOMMU_HWPT_ALLOC_NEST_PARENT = 1 << 0,
 	IOMMU_HWPT_ALLOC_DIRTY_TRACKING = 1 << 1,
+	IOMMU_HWPT_TRUSTED = 1 << 2,
 };
 
 /**
