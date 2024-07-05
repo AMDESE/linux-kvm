@@ -1195,7 +1195,10 @@ static int tsm_pci_bus_notifier(struct notifier_block *nb, unsigned long action,
 	case BUS_NOTIFY_DEL_DEVICE:
 		tsm_dev_freeice(data);
 		break;
-	/* TODO: Add TDI MMIO validation */
+	case BUS_NOTIFY_PCI_BUS_MASTER:
+		/* Validating before the driver or after the driver just does not work so don't! */
+		tsm_tdi_validate(tsm_tdi_get(data), false, tsm.private_data);
+		break;
 	case BUS_NOTIFY_UNBOUND_DRIVER:
 		tsm_tdi_validate(tsm_tdi_get(data), true, tsm.private_data);
 		break;
