@@ -269,7 +269,10 @@ enum bus_notifier_event {
 	BUS_NOTIFY_UNBIND_DRIVER,
 	BUS_NOTIFY_UNBOUND_DRIVER,
 	BUS_NOTIFY_DRIVER_NOT_BOUND,
+	BUS_NOTIFY_PCI_BUS_MASTER,
 };
+
+void bus_notify(struct device *dev, enum bus_notifier_event value);
 
 struct kset *bus_get_kset(const struct bus_type *bus);
 struct device *bus_get_dev_root(const struct bus_type *bus);

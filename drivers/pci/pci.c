@@ -4271,6 +4271,9 @@ static void __pci_set_master(struct pci_dev *dev, bool enable)
 		pci_write_config_word(dev, PCI_COMMAND, cmd);
 	}
 	dev->is_busmaster = enable;
+
+	if (enable && dev->dev.tdi_enabled)
+		bus_notify(&dev->dev, BUS_NOTIFY_PCI_BUS_MASTER);
 }
 
 /**
