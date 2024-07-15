@@ -51,4 +51,6 @@ int handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
 void *alloc_shared_pages(struct device *dev, size_t sz);
 void free_shared_pages(void *buf, size_t sz);
 
+void sev_guest_tsm_set_ops(bool set, struct snp_guest_dev *snp_dev);
+
 #endif /* __VIRT_SEVGUEST_H__ */

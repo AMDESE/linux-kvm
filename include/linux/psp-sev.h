@@ -1034,7 +1034,7 @@ static inline void *snp_alloc_firmware_page(gfp_t mask)
 static inline void snp_free_firmware_page(void *addr) { }
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
-
+//
 // Pack 3 fields into RDX
 // ........ ....GGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGGOOOO OOOO.rrr
 // Where:
@@ -1045,6 +1045,9 @@ static inline void snp_free_firmware_page(void *addr) { }
 #define MMIO_VALIDATE_LEN(r)	(1ULL << (12 + (((r) >> 4) & 0xFF)))
 #define MMIO_VALIDATE_RANGEID(r) ((r) & 0x7)
 #define MMIO_VALIDATE_RESERVED(r) ((r) & 0xFFF0000000000008ULL)
+
+#define MMIO_MK_VALIDATE(start, size, range_id) \
+	( MMIO_VALIDATE_GPA(start) | (get_order(size >> 12) << 4) | ((range_id) & 0xFF))
 
 struct tio_blob_table_entry {
 	guid_t guid;
@@ -1061,5 +1064,20 @@ struct tio_blob_table_entry {
 // Attestation report: 70dc5b0e-0cc0-4cd5-97bb-ff0ba25bf320
 #define TIO_GUID_REPORT \
 	GUID_INIT(0x70dc5b0e, 0x0cc0, 0x4cd5, 0x97, 0xbb, 0xff, 0x0b, 0xa2, 0x5b, 0xf3, 0x20)
+
+//
+// Status codes from TIO_MSG_MMIO_VALIDATE_REQ
+//
+enum mmio_validate_status {
+	MMIO_VALIDATE_SUCCESS = 0,
+	MMIO_VALIDATE_INVALID_TDI = 1,
+	MMIO_VALIDATE_TDI_UNBOUND = 2,
+	MMIO_VALIDATE_NOT_ASSIGNED = 3, // At least one page is not assigned to the guest.
+	MMIO_VALIDATE_NOT_UNIFORM = 4, // The Validated bit is not uniformly set for the MMIO subrange
+	MMIO_VALIDATE_NOT_IMMUTABLE = 5, // At least one page does not have immutable bit set when validated bit is clear
+	MMIO_VALIDATE_NOT_MAPPED = 6, // At least one page is not mapped to the expected GPA.
+	MMIO_VALIDATE_NOT_REPORTED = 7, // The provided MMIO range ID is not reported in the interface report.
+	MMIO_VALIDATE_OUT_OF_RANGE = 8, // The subrange is out the MMIO range in the interface report 
+};
 
 #endif	/* __PSP_SEV_H__ */
