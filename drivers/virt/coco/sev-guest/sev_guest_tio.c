@@ -8,12 +8,20 @@
 #include <asm/sev.h>
 
 #include "sev-guest.h"
+#include "../../../crypto/ccp/sev-dev-tio-dbg.h"
 
 #define TIO_MESSAGE_VERSION	1
 
 ulong tsm_vtom = 0x7fffffff;
 module_param(tsm_vtom, ulong, 0644);
 MODULE_PARM_DESC(tsm_vtom, "SEV TIO vTOM value");
+
+#define TIO_LOG_TIO	(1<<1)
+#define TIO_LOG_DOBJ	(1<<3)
+
+uint gtiolog = 0xFF;
+module_param_named(tiolog, gtiolog, uint, 0660);
+MODULE_PARM_DESC(tiolog, "Log level bitmask: 1 TIOABI  3 DataObjects");
 
 static void tio_guest_blob_free(struct tsm_blob *b)
 {
@@ -47,8 +55,27 @@ static int handle_tio_guest_request(struct snp_guest_dev *snp_dev, u8 type,
 		snp_dev->input.param = *param;
 
 	mutex_lock(&snp_cmd_mutex);
+	if (gtiolog & TIO_LOG_TIO) {
+		print_hex_dump(KERN_INFO, "RQh ", DUMP_PREFIX_OFFSET, 16, 1,
+			       &snp_dev->request->hdr, sizeof(snp_dev->request->hdr), false);
+		print_hex_dump(KERN_INFO, "RQ< ", DUMP_PREFIX_OFFSET, 16, 1, req_buf, req_sz, false);
+	}
+
 	ret = handle_guest_request(snp_dev, SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST,
 				   &rio, type, req_buf, req_sz, resp_buf, resp_sz);
+
+	if (ret || (gtiolog & TIO_LOG_TIO)) {
+		// Dump the request here if the log was disabled and then error happened
+		if (ret && !(gtiolog & TIO_LOG_TIO)) {
+			print_hex_dump(KERN_INFO, "RQh ", DUMP_PREFIX_OFFSET, 16, 1,
+				       &snp_dev->request->hdr, sizeof(snp_dev->request->hdr), false);
+			print_hex_dump(KERN_INFO, "RQ< ", DUMP_PREFIX_OFFSET, 16, 1, req_buf, req_sz, false);
+		}
+		print_hex_dump(KERN_INFO, "RSh ", DUMP_PREFIX_OFFSET, 16, 1,
+			       &snp_dev->response->hdr, sizeof(snp_dev->response->hdr), false);
+		print_hex_dump(KERN_INFO, "RS> ", DUMP_PREFIX_OFFSET, 16, 1, resp_buf,
+			       snp_dev->response->hdr.msg_sz, false);
+	}
 	mutex_unlock(&snp_cmd_mutex);
 
 	if (param)
@@ -305,8 +332,11 @@ static int mmio_validate_range(struct snp_guest_dev *snp_dev, struct pci_dev *pd
 	if (rc)
 		goto free_exit;
 
-	if (rsp->status)
+	if (rsp->status) {
+		pr_err("___K___ %s %u: status=%#x \"%s\"\n", __func__, __LINE__,
+		       rsp->status, mmio_fw_err_to_str(rsp->status));
 		rc = -EBADR;
+	}
 
 free_exit:
 	/* The response buffer contains the sensitive data, explicitly clear it. */
@@ -347,8 +377,9 @@ static int tio_tdi_mmio_validate(struct tsm_tdi *tdi, struct snp_guest_dev *snp_
 		rc = mmio_validate_range(snp_dev, pdev, mr.range_id,
 					 r->start, r->end - r->start + 1, invalidate, &fw_err);
 		if (rc) {
-			pci_err(pdev, "MMIO #%d %llx..%llx validation failed 0x%llx\n",
-				mr.range_id, r->start, r->end, fw_err);
+			pci_err(pdev, "MMIO #%d %llx..%llx validation failed 0x%llx %s/%s\n",
+				mr.range_id, r->start, r->end, fw_err, mmio_fw_err_to_str(fw_err),
+				psp_ret_to_str(fw_err));
 			continue;
 		}
 
@@ -421,6 +452,19 @@ struct tio_msg_sdte_write_req {
 #define SDTE_WRITE_TDI_NOT_BOUND 2
 #define SDTE_WRITE_RESERVED 3 // Reserved fields were not 0
 
+static const char *sdte_fw_err_to_str(u64 fw_err)
+{
+	switch (fw_err & 0xFFFFFFFF) {
+#define __FWERR(x)	case SDTE_WRITE_##x: return #x
+	__FWERR(SUCCESS);
+	__FWERR(INVALID_TDI);
+	__FWERR(TDI_NOT_BOUND);
+	__FWERR(RESERVED);
+#undef __FWERR
+	}
+	return "unknown";
+}
+
 struct tio_msg_sdte_write_rsp {
 	__u16 guest_device_id;
 	__u16 status; // SDTE_WRITE_xxx
@@ -461,7 +505,8 @@ static int tio_tdi_sdte_write(struct tsm_tdi *tdi, struct snp_guest_dev *snp_dev
 			       &req, sizeof(req), rsp, resp_len,
 			       NULL, NULL, &bdfn, NULL, &fw_err);
 	if (rc) {
-		pci_err(tdi->pdev, "SDTE write failed with 0x%llx\n", fw_err);
+		pci_err(tdi->pdev, "SDTE write failed with 0x%llx %s\n",
+			fw_err, sdte_fw_err_to_str(fw_err));
 		goto free_exit;
 	}
 

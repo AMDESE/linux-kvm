@@ -1,0 +1,200 @@
+#ifndef __PSP_SEV_TIO_DBG_H__
+#define __PSP_SEV_TIO_DBG_H__
+
+static inline const char *tio_cmd_to_str(int cmd)
+{
+	switch (cmd) {
+	case SEV_CMD_TIO_STATUS: return "STATUS";
+	case SEV_CMD_TIO_INIT: return "INIT";
+	case SEV_CMD_TIO_DEV_CREATE: return "DEV_CREATE";
+	case SEV_CMD_TIO_DEV_RECLAIM: return "DEV_RECLAIM";
+	case SEV_CMD_TIO_DEV_CONNECT: return "DEV_CONNECT";
+	case SEV_CMD_TIO_DEV_DISCONNECT: return "DEV_DISCONNECT";
+	case SEV_CMD_TIO_DEV_STATUS: return "DEV_STATUS";
+	case SEV_CMD_TIO_DEV_MEASUREMENTS: return "DEV_MEASUREMENTS";
+	case SEV_CMD_TIO_DEV_CERTIFICATES: return "DEV_CERTIFICATES";
+	case SEV_CMD_TIO_TDI_CREATE: return "TDI_CREATE";
+	case SEV_CMD_TIO_TDI_RECLAIM: return "TDI_RECLAIM";
+	case SEV_CMD_TIO_TDI_BIND: return "TDI_BIND";
+	case SEV_CMD_TIO_TDI_UNBIND: return "TDI_UNBIND";
+	case SEV_CMD_TIO_TDI_REPORT: return "TDI_REPORT";
+	case SEV_CMD_TIO_TDI_STATUS: return "TDI_STATUS";
+	case SEV_CMD_TIO_GUEST_REQUEST: return "GUEST_REQUEST";
+	case SEV_CMD_TIO_ASID_FENCE_CLEAR: return "ASID_FENCE_CLEAR";
+	case SEV_CMD_TIO_ASID_FENCE_STATUS: return "ASID_FENCE_STATUS";
+	case SEV_CMD_TIO_TDI_INFO: return "TDI_INFO";
+	case SEV_CMD_TIO_ROLL_KEY: return "ROLL_KEY";
+	}
+	return "UNKNOWN";
+}
+
+static inline const char *psp_ret_to_str(int psp_ret)
+{
+	switch (psp_ret) {
+#define __PSPR(x) case x: return #x
+	__PSPR(SEV_RET_SUCCESS);
+	__PSPR(SEV_RET_INVALID_PLATFORM_STATE);
+	__PSPR(SEV_RET_INVALID_GUEST_STATE);
+	__PSPR(SEV_RET_INVALID_CONFIG);
+	__PSPR(SEV_RET_INVALID_LEN);
+	__PSPR(SEV_RET_ALREADY_OWNED);
+	__PSPR(SEV_RET_INVALID_CERTIFICATE);
+	__PSPR(SEV_RET_POLICY_FAILURE);
+	__PSPR(SEV_RET_INACTIVE);
+	__PSPR(SEV_RET_INVALID_ADDRESS);
+	__PSPR(SEV_RET_BAD_SIGNATURE);
+	__PSPR(SEV_RET_BAD_MEASUREMENT);
+	__PSPR(SEV_RET_ASID_OWNED);
+	__PSPR(SEV_RET_INVALID_ASID);
+	__PSPR(SEV_RET_WBINVD_REQUIRED);
+	__PSPR(SEV_RET_DFFLUSH_REQUIRED);
+	__PSPR(SEV_RET_INVALID_GUEST);
+	__PSPR(SEV_RET_INVALID_COMMAND);
+	__PSPR(SEV_RET_ACTIVE);
+	__PSPR(SEV_RET_HWSEV_RET_PLATFORM);
+	__PSPR(SEV_RET_HWSEV_RET_UNSAFE);
+	__PSPR(SEV_RET_UNSUPPORTED);
+	__PSPR(SEV_RET_INVALID_PARAM);
+	__PSPR(SEV_RET_RESOURCE_LIMIT);
+	__PSPR(SEV_RET_SECURE_DATA_INVALID);
+	__PSPR(SEV_RET_INVALID_PAGE_SIZE);
+	__PSPR(SEV_RET_INVALID_PAGE_STATE);
+	__PSPR(SEV_RET_INVALID_MDATA_ENTRY);
+	__PSPR(SEV_RET_INVALID_PAGE_OWNER);
+	__PSPR(SEV_RET_AEAD_OFLOW);
+	__PSPR(SEV_RET_EXIT_RING_BUFFER);
+	__PSPR(SEV_RET_RMP_INIT_REQUIRED);
+	__PSPR(SEV_RET_BAD_SVN);
+	__PSPR(SEV_RET_BAD_VERSION);
+	__PSPR(SEV_RET_SHUTDOWN_REQUIRED);
+	__PSPR(SEV_RET_UPDATE_FAILED);
+	__PSPR(SEV_RET_RESTORE_REQUIRED);
+	__PSPR(SEV_RET_RMP_INITIALIZATION_FAILED);
+	__PSPR(SEV_RET_INVALID_KEY);
+	__PSPR(SEV_RET_SHUTDOWN_INCOMPLETE);
+	__PSPR(SEV_RET_SPDM_REQUEST);
+	__PSPR(SEV_RET_SPDM_ERROR);
+	__PSPR(SEV_RET_IN_USE);
+	__PSPR(SEV_RET_LIMIT);
+	__PSPR(SEV_RET_ERR_UNKNOWN);
+	__PSPR(SEV_RET_ERR_INVAL);
+	__PSPR(SEV_RET_ERR_INVALID_PARAMS);
+	__PSPR(SEV_RET_ERR_SECURE_DATA_VALIDATION);
+	__PSPR(SEV_RET_ERR_SECURE_DATA_NON_EXIST);
+	__PSPR(SEV_RET_ERR_OUT_OF_RESOURCES);
+	__PSPR(SEV_RET_ERR_UNIMPLEMENTED);
+	__PSPR(SEV_RET_ERR_SEV_DLFW_CONTINUING);
+	__PSPR(SEV_RET_ERR_STATUS_ISB_ERROR);
+	__PSPR(SEV_RET_ERR_HAL_SLAVE_DIE);
+	__PSPR(SEV_RET_ERR_HAL_PERSISTENT_WRITE);
+	__PSPR(SEV_RET_ERR_HAL_PERSISTENT_READ);
+	__PSPR(SEV_RET_ERR_HAL_PERSISTENT_ERASE);
+	__PSPR(SEV_RET_ERR_HAL_KEY_DERIVE);
+	__PSPR(SEV_RET_ERR_HAL_AES);
+	__PSPR(SEV_RET_ERR_HAL_SHA256);
+	__PSPR(SEV_RET_ERR_HAL_CACHE);
+	__PSPR(SEV_RET_ERR_HAL_MEMORY_MAP);
+	__PSPR(SEV_RET_ERR_HAL_TRNG);
+	__PSPR(SEV_RET_ERR_HAL_ECC_PRIMITIVE);
+	__PSPR(SEV_RET_ERR_HAL_RSA_PSS_VALIDATE);
+	__PSPR(SEV_RET_ERR_HAL_MAP_SMN);
+	__PSPR(SEV_RET_ERR_HAL_MCM_INFO);
+	__PSPR(SEV_RET_ERR_HAL_SEV_MODE);
+	__PSPR(SEV_RET_ERR_TIO_DATABUFFER_EXPAND);
+	__PSPR(SEV_RET_MAX);
+#undef __PSPR
+	}
+	return "UNKNOWN_RET";
+}
+
+static inline const char *spdm_to_str(int code)
+{
+        switch (code) {
+        case 0x01: return "SPDM_DIGESTS";
+        case 0x02: return "SPDM_CERTIFICATE";
+        case 0x03: return "SPDM_CHALLENGE_AUTH";
+        case 0x04: return "SPDM_VERSION";
+        case 0x60: return "SPDM_MEASUREMENTS";
+        case 0x61: return "SPDM_CAPABILITIES";
+        case 0x63: return "SPDM_ALGORITHMS";
+        case 0x7E: return "SPDM_VENDOR_DEFINED_RESPONSE";
+        case 0x7F: return "SPDM_ERROR";
+        case 0x64: return "SPDM_KEY_EXCHANGE_RSP";
+        case 0x65: return "SPDM_FINISH_RSP";
+        case 0x66: return "SPDM_PSK_EXCHANGE_RSP";
+        case 0x67: return "SPDM_PSK_FINISH_RSP";
+        case 0x68: return "SPDM_HEARTBEAT_ACK";
+        case 0x69: return "SPDM_KEY_UPDATE_ACK";
+        case 0x6A: return "SPDM_ENCAPSULATED_REQUEST";
+        case 0x6B: return "SPDM_ENCAPSULATED_RESPONSE_ACK";
+        case 0x6C: return "SPDM_END_SESSION_ACK";
+        case 0x6D: return "SPDM_CSR";
+        case 0x6E: return "SPDM_SET_CERTIFICATE_RSP";
+        case 0x05: return "SPDM_CHUNK_SEND_ACK";
+        case 0x06: return "SPDM_CHUNK_RESPONSE";
+        case 0x81: return "SPDM_GET_DIGESTS";
+        case 0x82: return "SPDM_GET_CERTIFICATE";
+        case 0x83: return "SPDM_CHALLENGE";
+        case 0x84: return "SPDM_GET_VERSION";
+        case 0xE0: return "SPDM_GET_MEASUREMENTS";
+        case 0xE1: return "SPDM_GET_CAPABILITIES";
+        case 0xE3: return "SPDM_NEGOTIATE_ALGORITHMS";
+        case 0xFE: return "SPDM_VENDOR_DEFINED_REQUEST";
+        case 0xFF: return "SPDM_RESPOND_IF_READY";
+        case 0xE4: return "SPDM_KEY_EXCHANGE";
+        case 0xE5: return "SPDM_FINISH";
+        case 0xE6: return "SPDM_PSK_EXCHANGE";
+        case 0xE7: return "SPDM_PSK_FINISH";
+        case 0xE8: return "SPDM_HEARTBEAT";
+        case 0xE9: return "SPDM_KEY_UPDATE";
+        case 0xEA: return "SPDM_GET_ENCAPSULATED_REQUEST";
+        case 0xEB: return "SPDM_DELIVER_ENCAPSULATED_RESPONSE";
+        case 0xEC: return "SPDM_END_SESSION";
+        case 0xED: return "SPDM_GET_CSR";
+        case 0xEE: return "SPDM_SET_CERTIFICATE";
+        case 0x85: return "SPDM_CHUNK_SEND";
+        case 0x86: return "SPDM_CHUNK_GET";
+        }
+        return "unknown";
+}
+
+static inline char *guest_req_to_str(unsigned cmd)
+{
+	switch (cmd) {
+	case TIO_MSG_TDI_INFO_REQ: return "TDI_INFO_REQ";
+	case TIO_MSG_TDI_INFO_RSP: return "TDI_INFO_RSP";
+	case TIO_MSG_MMIO_VALIDATE_REQ: return "MMIO_VALIDATE_REQ";
+	case TIO_MSG_MMIO_VALIDATE_RSP: return "MMIO_VALIDATE_RSP";
+	case TIO_MSG_MMIO_CONFIG_REQ: return "MMIO_CONFIG_REQ";
+	case TIO_MSG_MMIO_CONFIG_RSP: return "MMIO_CONFIG_RSP";
+	case TIO_MSG_SDTE_WRITE_REQ: return "SDTE_WRITE_REQ";
+	case TIO_MSG_SDTE_WRITE_RSP: return "SDTE_WRITE_RSP";
+	default: return "UNKNOWN";
+	}
+}
+
+static inline const char *dobj_str(u32 dobj)
+{
+	static const char *ids[] = {"!!!", "req", "resp", "scratch", "certs", "meas", "report"};
+	return dobj < ARRAY_SIZE(ids) ? ids[dobj] : "UNK";
+}
+
+static inline const char *mmio_fw_err_to_str(u64 fw_err)
+{
+	switch (fw_err & 0xFFFFFFFF) {
+#define __FWERR(x)	case MMIO_VALIDATE_##x: return #x
+	__FWERR(SUCCESS);
+	__FWERR(INVALID_TDI);
+	__FWERR(TDI_UNBOUND);
+	__FWERR(NOT_ASSIGNED);
+	__FWERR(NOT_UNIFORM);
+	__FWERR(NOT_IMMUTABLE);
+	__FWERR(NOT_MAPPED);
+	__FWERR(NOT_REPORTED);
+	__FWERR(OUT_OF_RANGE);
+#undef __FWERR
+	}
+	return "unknown";
+}
+
+#endif // __PSP_SEV_TIO_DBG_H__

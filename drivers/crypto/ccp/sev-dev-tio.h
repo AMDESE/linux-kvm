@@ -89,6 +89,14 @@ int sev_tio_tdi_status(struct tsm_dev_tio *dev_data, struct tsm_tdi_tio *tdi_dat
 int sev_tio_tdi_status_fin(struct tsm_dev_tio *dev_data, struct tsm_tdi_tio *tdi_data,
 			   enum tsm_tdisp_state *state);
 
+#define TIO_LOG_SPDM	(1<<0)
+#define TIO_LOG_TIO	(1<<1)
+#define TIO_LOG_DOBJ	(1<<3)
+#define TIO_LOG_MEM	(1<<4)
+#define TIO_LOG_GUEST	(1<<5)
+
+extern uint tiolog;
+
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
 
 #endif	/* __PSP_SEV_TIO_H__ */

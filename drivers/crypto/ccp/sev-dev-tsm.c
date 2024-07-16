@@ -8,10 +8,12 @@
 
 #include <asm/smp.h>
 #include <asm/sev-common.h>
+#include <asm/sev.h>
 
 #include "psp-dev.h"
 #include "sev-dev.h"
 #include "sev-dev-tio.h"
+#include "sev-dev-tio-dbg.h"
 
 static int mkret(int ret, struct tsm_dev_tio *dev_data)
 {
@@ -298,6 +300,13 @@ static int guest_request(struct tsm_tdi *tdi, u32 guest_rid, u64 kvmid, void *re
 		return -EFAULT;
 
 	if (dev_data->cmd == 0) {
+		struct snp_guest_msg_hdr *rq = phys_to_virt(req->data.req_paddr);
+		char pfx[64];
+
+		sprintf(pfx, "*Rq %s %x ", guest_req_to_str(rq->msg_type), rq->msg_type);
+		if (tiolog & TIO_LOG_GUEST)
+			print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, rq, sizeof(*rq), false);
+
 		ret = sev_tio_guest_request(&req->data, guest_rid, kvmid,
 					    dev_data, tdi->data, &tdi->tdev->spdm);
 		req->fw_err = dev_data->psp_ret;
@@ -323,6 +332,21 @@ static int guest_request(struct tsm_tdi *tdi, u32 guest_rid, u64 kvmid, void *re
 			return ret;
 
 		ret = sev_tio_tdi_status_fin(tdi->tdev->data, tdi->data, state);
+	}
+
+	if (ret || (tiolog & TIO_LOG_GUEST)) {
+		struct snp_guest_msg_hdr *rs = phys_to_virt(req->data.res_paddr);
+		char pfx[64];
+
+		if (ret && !(tiolog & TIO_LOG_GUEST)) {
+			// Dump the request here if the log was disabled and then error happened
+			struct snp_guest_msg_hdr *rq = phys_to_virt(req->data.req_paddr);
+			sprintf(pfx, "*Rq %s %x ", guest_req_to_str(rq->msg_type), rq->msg_type);
+			print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, rq, sizeof(*rq), false);
+		}
+
+		sprintf(pfx, "*Rs %s %x ", guest_req_to_str(rs->msg_type), rs->msg_type);
+		print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, rs, sizeof(*rs), false);
 	}
 
 	return ret;
