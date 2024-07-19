@@ -269,6 +269,17 @@ static void amd_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
 	int msr_clear = !!(is_passthrough_pmu_enabled(vcpu));
 	int i;
 
+	for (i = 0; i < min(pmu->nr_arch_gp_counters, AMD64_NUM_COUNTERS); i++) {
+		/*
+		 * Legacy counters are always available irrespective of any
+		 * CPUID feature bits and when X86_FEATURE_PERFCTR_CORE is set,
+		 * PERF_LEGACY_CTLx and PERF_LEGACY_CTRx registers are mirrored
+		 * with PERF_CTLx and PERF_CTRx respectively.
+		 */
+		set_msr_interception(vcpu, svm->msrpm, MSR_K7_EVNTSEL0 + i, 0, 0);
+		set_msr_interception(vcpu, svm->msrpm, MSR_K7_PERFCTR0 + i, msr_clear, msr_clear);
+	}
+
 	for (i = 0; i < kvm_pmu_cap.num_counters_gp; i++) {
 		/*
 		 * PERF_CTLx registers require interception in order to clear
