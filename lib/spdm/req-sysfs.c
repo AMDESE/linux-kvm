@@ -568,7 +568,7 @@ void spdm_destroy_log(struct spdm_state *spdm_state)
 }
 
 #ifdef CONFIG_SYSCTL
-static int proc_max_log_sz(struct ctl_table *table, int write,
+static int proc_max_log_sz(const struct ctl_table *table, int write,
 			   void *buffer, size_t *lenp, loff_t *ppos)
 {
 	unsigned int old_max_log_sz = spdm_max_log_sz;
