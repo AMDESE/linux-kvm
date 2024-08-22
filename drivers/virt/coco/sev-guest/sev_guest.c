@@ -52,6 +52,10 @@ static int vmpck_id = -1;
 module_param(vmpck_id, int, 0444);
 MODULE_PARM_DESC(vmpck_id, "The VMPCK ID to use when communicating with the PSP.");
 
+static bool tsm_enable = true;
+module_param(tsm_enable, bool, 0644);
+MODULE_PARM_DESC(tsm_enable, "Enable SEV TIO");
+
 /* Mutex to serialize the shared buffer access and command handling. */
 DEFINE_MUTEX(snp_cmd_mutex);
 
@@ -277,7 +281,8 @@ static int verify_and_dec_payload(struct snp_guest_dev *snp_dev, void *payload, 
 		return -EBADMSG;
 
 	/* Verify response message type and version number. */
-	if (resp_hdr->msg_type != (req_hdr->msg_type + 1) ||
+	if ((resp_hdr->msg_type != (req_hdr->msg_type + 1) &&
+	     (resp_hdr->msg_type != (req_hdr->msg_type - 0x80))) ||
 	    resp_hdr->msg_version != req_hdr->msg_version)
 		return -EBADMSG;
 
@@ -337,6 +342,10 @@ retry_request:
 	rc = snp_issue_guest_request(exit_code, &snp_dev->input, rio);
 	switch (rc) {
 	case -ENOSPC:
+		if (exit_code == SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST) {
+			pr_warn("SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST => -ENOSPC");
+			break;
+		}
 		/*
 		 * If the extended guest request fails due to having too
 		 * small of a certificate data buffer, retry the same
@@ -1142,6 +1151,9 @@ static int __init sev_guest_probe(struct platform_device *pdev)
 	if (ret)
 		goto e_free_cert_data;
 
+	if (tsm_enable)
+		sev_guest_tsm_set_ops(true, snp_dev);
+
 	dev_info(dev, "Initialized SEV guest driver (using vmpck_id %d)\n", vmpck_id);
 	return 0;
 
@@ -1160,6 +1172,8 @@ static void __exit sev_guest_remove(struct platform_device *pdev)
 {
 	struct snp_guest_dev *snp_dev = platform_get_drvdata(pdev);
 
+	if (tsm_enable)
+		sev_guest_tsm_set_ops(false, snp_dev);
 	free_shared_pages(snp_dev->certs_data, SEV_FW_BLOB_MAX_SIZE);
 	free_shared_pages(snp_dev->response, sizeof(struct snp_guest_msg));
 	free_shared_pages(snp_dev->request, sizeof(struct snp_guest_msg));
