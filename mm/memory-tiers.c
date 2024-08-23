@@ -43,6 +43,7 @@ static LIST_HEAD(memory_tiers);
 static LIST_HEAD(default_memory_types);
 static struct node_memory_type_map node_memory_types[MAX_NUMNODES];
 struct memory_dev_type *default_dram_type;
+nodemask_t default_dram_nodes __initdata = NODE_MASK_NONE;
 
 static const struct bus_type memory_tier_subsys = {
 	.name = "memory_tiering",
@@ -671,28 +672,35 @@ EXPORT_SYMBOL_GPL(mt_put_memory_types);
 
 /*
  * This is invoked via `late_initcall()` to initialize memory tiers for
- * CPU-less memory nodes after driver initialization, which is
- * expected to provide `adistance` algorithms.
+ * memory nodes, both with and without CPUs. After the initialization of
+ * firmware and devices, adistance algorithms are expected to be provided.
  */
 static int __init memory_tier_late_init(void)
 {
 	int nid;
+	struct memory_tier *memtier;
 
+	get_online_mems();
 	guard(mutex)(&memory_tier_lock);
+
+	/* Assign each uninitialized N_MEMORY node to a memory tier. */
 	for_each_node_state(nid, N_MEMORY) {
 		/*
-		 * Some device drivers may have initialized memory tiers
-		 * between `memory_tier_init()` and `memory_tier_late_init()`,
-		 * potentially bringing online memory nodes and
-		 * configuring memory tiers. Exclude them here.
+		 * Some device drivers may have initialized
+		 * memory tiers, potentially bringing memory nodes
+		 * online and configuring memory tiers.
+		 * Exclude them here.
 		 */
 		if (node_memory_types[nid].memtype)
 			continue;
 
-		set_node_memory_tier(nid);
+		memtier = set_node_memory_tier(nid);
+		if (IS_ERR(memtier))
+			continue;
 	}
 
 	establish_demotion_targets();
+	put_online_mems();
 
 	return 0;
 }
@@ -714,18 +722,8 @@ int mt_set_default_dram_perf(int nid, struct access_coordinate *perf,
 		return -EIO;
 
 	if (perf->read_latency + perf->write_latency == 0 ||
-	    perf->read_bandwidth + perf->write_bandwidth == 0)
-		return -EINVAL;
-
-	if (default_dram_perf_ref_nid == NUMA_NO_NODE) {
-		default_dram_perf = *perf;
-		default_dram_perf_ref_nid = nid;
-		default_dram_perf_ref_source = kstrdup(source, GFP_KERNEL);
-		return 0;
-	}
-
-	/*
-	 * The performance of all default DRAM nodes is expected to be
+	    perf->read_bandwidth + perf->write_latency == 0 ||
+	e performance of all default DRAM nodes is expected to be
 	 * same (that is, the variation is less than 10%).  And it
 	 * will be used as base to calculate the abstract distance of
 	 * other memory nodes.
@@ -972,17 +970,4 @@ static int __init numa_init_sysfs(void)
 		pr_err("failed to create numa kobject\n");
 		return -ENOMEM;
 	}
-	err = sysfs_create_group(numa_kobj, &numa_attr_group);
-	if (err) {
-		pr_err("failed to register numa group\n");
-		goto delete_obj;
-	}
-	return 0;
-
-delete_obj:
-	kobject_put(numa_kobj);
-	return err;
-}
-subsys_initcall(numa_init_sysfs);
-#endif /* CONFIG_SYSFS */
-#endif
+	err = 
