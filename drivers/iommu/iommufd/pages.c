@@ -56,6 +56,9 @@
 #include <linux/slab.h>
 #include <linux/sched/mm.h>
 #include <linux/vfio_pci_core.h>
+#include <linux/pagemap.h>
+#include <linux/memcontrol.h>
+#include <linux/kvm_host.h>
 
 #include "double_span.h"
 #include "io_pagetable.h"
@@ -66,6 +69,8 @@
 #define TEMP_MEMORY_LIMIT iommufd_test_memory_limit
 #endif
 #define BATCH_BACKUP_SIZE 32
+
+#define iommufd_is_gmemfd(ps) ((ps)->type == IOPT_ADDRESS_FILE) && kvm_is_gmemfd((ps)->file)
 
 /*
  * More memory makes pin_user_pages() and the batching more efficient, but as
@@ -660,7 +665,8 @@ static void batch_from_pages(struct pfn_batch *batch, struct page **pages,
 }
 
 static int batch_from_folios(struct pfn_batch *batch, struct folio ***folios_p,
-			     unsigned long *offset_p, unsigned long npages)
+			     unsigned long *offset_p, unsigned long npages,
+			     bool do_pin)
 {
 	int rc = 0;
 	struct folio **folios = *folios_p;
@@ -676,7 +682,7 @@ static int batch_from_folios(struct pfn_batch *batch, struct folio ***folios_p,
 
 		if (!batch_add_pfn_num(batch, pfn, nr, BATCH_CPU_MEMORY))
 			break;
-		if (nr > 1) {
+		if (nr > 1 && do_pin) {
 			rc = folio_add_pins(folio, nr - 1);
 			if (rc) {
 				batch_remove_pfn_num(batch, nr);
@@ -697,6 +703,7 @@ out:
 static void batch_unpin(struct pfn_batch *batch, struct iopt_pages *pages,
 			unsigned int first_page_off, size_t npages)
 {
+	bool do_unpin = !iommufd_is_gmemfd(pages);
 	unsigned int cur = 0;
 
 	while (first_page_off) {
@@ -710,9 +717,12 @@ static void batch_unpin(struct pfn_batch *batch, struct iopt_pages *pages,
 		size_t to_unpin = min_t(size_t, npages,
 					batch->npfns[cur] - first_page_off);
 
-		unpin_user_page_range_dirty_lock(
-			pfn_to_page(batch->pfns[cur] + first_page_off),
-			to_unpin, pages->writable);
+		/* Do nothing for guest_memfd */
+		if (do_unpin)
+			unpin_user_page_range_dirty_lock(
+				pfn_to_page(batch->pfns[cur] + first_page_off),
+				to_unpin, pages->writable);
+
 		iopt_pages_sub_npinned(pages, to_unpin);
 		cur++;
 		first_page_off = 0;
@@ -872,6 +882,57 @@ static long pin_memfd_pages(struct pfn_reader_user *user, unsigned long start,
 	return npages_out;
 }
 
+static long pin_guest_memfd_pages(struct pfn_reader_user *user, loff_t start, unsigned long npages)
+{
+	struct page **upages = user->upages;
+	unsigned long offset = 0;
+	loff_t uptr = start;
+	long rc = 0;
+
+	for (unsigned long i = 0; (uptr - start) < (npages << PAGE_SHIFT); ++i) {
+		unsigned long gfn = 0, pfn = 0;
+		int max_order = 0;
+		struct folio *folio;
+
+		folio = kvm_gmemfd_get_pfn(user->file, uptr >> PAGE_SHIFT, &pfn, &max_order);
+		if (IS_ERR(folio))
+			rc = PTR_ERR(folio);
+
+		if (rc == -EINVAL && i == 0) {
+			pr_err_once("Must be vfio mmio at gfn=%lx pfn=%lx, skipping\n", gfn, pfn);
+			return rc;
+		}
+
+		if (rc) {
+			pr_err("%s: %ld %ld %lx -> %lx\n", __func__,
+			       rc, i, (unsigned long) uptr, (unsigned long) pfn);
+			break;
+		}
+
+		if (i == 0)
+			offset = offset_in_folio(folio, start) >> PAGE_SHIFT;
+
+		user->ufolios[i] = folio;
+
+		if (upages) {
+			unsigned long np = (1UL << (max_order + PAGE_SHIFT)) - offset_in_folio(folio, uptr);
+
+			for (unsigned long j = 0; j < np; ++j)
+				*upages++ = folio_page(folio, offset + j);
+		}
+
+		uptr += (1UL << (max_order + PAGE_SHIFT)) - offset_in_folio(folio, uptr);
+	}
+
+	if (!rc) {
+		rc = npages;
+		user->ufolios_next = user->ufolios;
+		user->ufolios_offset = offset;
+	}
+
+	return rc;
+}
+
 static int pfn_reader_user_pin(struct pfn_reader_user *user,
 			       struct iopt_pages *pages,
 			       unsigned long start_index,
@@ -925,7 +986,13 @@ static int pfn_reader_user_pin(struct pfn_reader_user *user,
 
 	if (user->file) {
 		start = pages->start + (start_index * PAGE_SIZE);
-		rc = pin_memfd_pages(user, start, npages);
+		if (iommufd_is_gmemfd(pages)) {
+			rc = pin_guest_memfd_pages(user, start, npages);
+		} else {
+			pr_err("UNEXP PINFD start=%lx sz=%lx file=%lx",
+				start, npages << PAGE_SHIFT, (ulong) pages->file);
+			rc = pin_memfd_pages(user, start, npages);
+		}
 	} else if (!remote_mm) {
 		uptr = (uintptr_t)(pages->uptr + start_index * PAGE_SIZE);
 		rc = pin_user_pages_fast(uptr, npages, user->gup_flags,
@@ -1221,7 +1288,8 @@ static int pfn_reader_fill_span(struct pfn_reader *pfns)
 				 npages);
 	else
 		rc = batch_from_folios(&pfns->batch, &user->ufolios_next,
-				       &user->ufolios_offset, npages);
+				       &user->ufolios_offset, npages,
+				       !iommufd_is_gmemfd(pfns->pages));
 	return rc;
 }
 

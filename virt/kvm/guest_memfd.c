@@ -1785,3 +1785,39 @@ void kvm_gmem_exit(void)
 	rcu_barrier();
 	kmem_cache_destroy(kvm_gmem_inode_cachep);
 }
+
+bool kvm_is_gmemfd(struct file *file)
+{
+	if (!file)
+		return false;
+
+	if (file->f_op != &kvm_gmem_fops)
+		return false;
+
+	return true;
+}
+EXPORT_SYMBOL_GPL(kvm_is_gmemfd);
+
+struct folio *kvm_gmemfd_get_pfn(struct file *file, unsigned long index,
+				 unsigned long *pfn, int *max_order)
+{
+	struct inode *inode = file_inode(file);
+	struct folio *folio;
+
+	if (!inode || !kvm_is_gmemfd(file))
+		return NULL;
+
+	folio = kvm_gmem_get_folio(inode, index);
+	if (!folio)
+		return NULL;
+
+
+	*pfn = folio_pfn(folio) + (index & (folio_nr_pages(folio) - 1));
+	*max_order = folio_order(folio);
+
+	folio_put(folio);
+	folio_unlock(folio);
+
+	return folio;
+}
+EXPORT_SYMBOL_GPL(kvm_gmemfd_get_pfn);

@@ -2673,4 +2673,8 @@ unsigned long kvm_get_vm_memory_attributes(struct kvm *kvm, gfn_t gfn);
 int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes2 *attrs);
 
+bool kvm_is_gmemfd(struct file *file);
+struct folio *kvm_gmemfd_get_pfn(struct file *file, unsigned long index,
+				 unsigned long *pfn, int *max_order);
+
 #endif
