@@ -436,6 +436,9 @@ reprogram_complete:
 
 static bool kvm_passthrough_pmu_incr_counter(struct kvm_pmc *pmc)
 {
+	if (!(pmc->eventsel_hw & ARCH_PERFMON_EVENTSEL_ENABLE))
+		pmc->emulated_counter = 0;
+
 	if (!pmc->emulated_counter)
 		return false;
 
