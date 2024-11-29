@@ -586,7 +586,8 @@ int kvm_pmu_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS:
 		if (pmu->passthrough.enabled &&
 		    pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp) {
-			rdmsrl(msr, pmu->global_status);
+			if (!pmu->passthrough.optimized)
+				rdmsrl(msr, pmu->global_status);
 			pmu->global_status &= ~pmu->global_status_mask;
 		}
 		msr_info->data = pmu->global_status;
@@ -645,7 +646,8 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			/* Passthrough vPMU never reprogram counters. */
 			if (!pmu->passthrough.enabled)
 				reprogram_counters(pmu, diff);
-			else if (pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp)
+			else if (pmu->passthrough.optimized &&
+				 pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp)
 				wrmsrl(msr, pmu->global_ctrl);
 		}
 		break;
@@ -660,7 +662,8 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR:
 		if (!msr_info->host_initiated) {
 			pmu->global_status &= ~data;
-			if (pmu->passthrough &&
+			if (pmu->passthrough.enabled &&
+			    pmu->passthrough.optimized &&
 			    pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp)
 				wrmsrl(msr, data & ~pmu->global_status_mask);
 		}

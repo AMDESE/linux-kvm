@@ -10646,6 +10646,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	fastpath_t exit_fastpath;
 
 	bool req_immediate_exit = false;
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 
 	if (kvm_request_pending(vcpu)) {
 		if (kvm_check_request(KVM_REQ_VM_DEAD, vcpu)) {
@@ -10727,7 +10728,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		if (kvm_check_request(KVM_REQ_STEAL_UPDATE, vcpu))
 			record_steal_time(vcpu);
 		if (kvm_check_request(KVM_REQ_PMU, vcpu)) {
-			if (is_passthrough_pmu_enabled(vcpu))
+			if (pmu->passthrough.enabled)
 				kvm_passthrough_pmu_handle_event(vcpu);
 			else
 				kvm_pmu_handle_event(vcpu);
@@ -10902,7 +10903,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		set_debugreg(0, 7);
 	}
 
-	if (is_passthrough_pmu_enabled(vcpu))
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized)
 		perf_guest_switch_to_kvm_pmi_vector(kvm_lapic_get_lvtpc_mask(vcpu));
 
 	guest_timing_enter_irqoff();
@@ -11274,13 +11275,14 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 	struct kvm_queued_exception *ex = &vcpu->arch.exception;
 	struct kvm_run *kvm_run = vcpu->run;
 	int r;
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 
 	vcpu_load(vcpu);
 	kvm_sigset_activate(vcpu);
 	kvm_run->flags = 0;
 	kvm_load_guest_fpu(vcpu);
 
-	if (is_passthrough_pmu_enabled(vcpu))
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized)
 		kvm_load_guest_pmu(vcpu);
 
 	kvm_vcpu_srcu_read_lock(vcpu);
@@ -11375,7 +11377,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 	r = vcpu_run(vcpu);
 
 out:
-	if (is_passthrough_pmu_enabled(vcpu))
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized)
 		kvm_put_guest_pmu(vcpu);
 	kvm_put_guest_fpu(vcpu);
 	if (kvm_run->kvm_valid_regs)
@@ -11549,12 +11551,13 @@ int kvm_arch_vcpu_ioctl_get_mpstate(struct kvm_vcpu *vcpu,
 				    struct kvm_mp_state *mp_state)
 {
 	int r;
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 
 	vcpu_load(vcpu);
 	if (kvm_mpx_supported())
 		kvm_load_guest_fpu(vcpu);
 
-	if (is_passthrough_pmu_enabled(vcpu))
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized)
 		kvm_load_guest_pmu(vcpu);
 
 	r = kvm_apic_accept_events(vcpu);
@@ -11570,7 +11573,7 @@ int kvm_arch_vcpu_ioctl_get_mpstate(struct kvm_vcpu *vcpu,
 		mp_state->mp_state = vcpu->arch.mp_state;
 
 out:
-	if (is_passthrough_pmu_enabled(vcpu))
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized)
 		kvm_put_guest_pmu(vcpu);
 
 	if (kvm_mpx_supported())
@@ -12199,6 +12202,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	struct kvm_cpuid_entry2 *cpuid_0x1;
 	unsigned long old_cr0 = kvm_read_cr0(vcpu);
 	unsigned long new_cr0;
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 
 	/*
 	 * Several of the "set" flows, e.g. ->set_cr0(), read other registers
@@ -12268,7 +12272,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 			kvm_load_guest_fpu(vcpu);
 	}
 
-	if (init_event && is_passthrough_pmu_enabled(vcpu))
+	if (init_event && pmu->passthrough.enabled && pmu->passthrough.optimized)
 		kvm_load_guest_pmu(vcpu);
 
 	if (!init_event) {
@@ -12482,7 +12486,7 @@ void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
 
 
 	vcpu->arch.l1tf_flush_l1d = true;
-	if (is_passthrough_pmu_enabled(vcpu)) {
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized) {
 		local_irq_save(flags);
 		if (vcpu->arch.guest_pmu_in_use)
 			kvm_pmu_restore_pmu_context(vcpu);
@@ -12496,7 +12500,9 @@ void kvm_arch_sched_in(struct kvm_vcpu *vcpu, int cpu)
 
 void kvm_arch_sched_out(struct kvm_vcpu *vcpu)
 {
-	if (is_passthrough_pmu_enabled(vcpu)) {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+
+	if (pmu->passthrough.enabled && pmu->passthrough.optimized) {
 		if (vcpu->arch.guest_pmu_in_use)
 			kvm_pmu_save_pmu_context(vcpu);
 	}

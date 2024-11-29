@@ -178,12 +178,14 @@ static int amd_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 				 */
 				pmc->eventsel_hw = 0;
 				pmc->eventsel &= ~ARCH_PERFMON_EVENTSEL_ENABLE;
-				wrmsrl(msr, pmc->eventsel_hw);
+				if (pmu->passthrough.optimized)
+					wrmsrl(msr, pmc->eventsel_hw);
 				return 0;
 			}
 			data &= ~AMD64_EVENTSEL_HOSTONLY;
 			pmc->eventsel_hw = data | AMD64_EVENTSEL_GUESTONLY;
-			wrmsrl(msr, pmc->eventsel_hw);
+			if (pmu->passthrough.optimized)
+				wrmsrl(msr, pmc->eventsel_hw);
 		} else if (data != pmc->eventsel) {
 			kvm_pmu_request_counter_reprogram(pmc);
 		}
@@ -376,7 +378,6 @@ static void amd_restore_pmu_context(struct kvm_vcpu *vcpu)
 static void amd_set_overflow(struct kvm_vcpu *vcpu)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
-	u64 global_status;
 
 	/*
 	 * PMU global status in pmu->global_status is stale when PMU context
@@ -384,13 +385,20 @@ static void amd_set_overflow(struct kvm_vcpu *vcpu)
 	 * logically or the synthesized overflow bits from emulated counter
 	 * increments.
 	 */
-	rdmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS, global_status);
-	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_SET, global_status | pmu->synthesized_overflow);
+	if (pmu->passthrough.optimized)
+		rdmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS, pmu->global_status);
+
+	pmu->global_status |= pmu->synthesized_overflow;
+
+	if (pmu->passthrough.optimized)
+		wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_SET, pmu->global_status);
+
 	pmu->synthesized_overflow = 0ull;
 }
 
 static bool amd_incr_counter(struct kvm_pmc *pmc)
 {
+	struct kvm_pmu *pmu = pmc_to_pmu(pmc);
 	u64 counter = 0;
 
 	if (!(pmc->eventsel_hw & ARCH_PERFMON_EVENTSEL_ENABLE))
@@ -399,11 +407,15 @@ static bool amd_incr_counter(struct kvm_pmc *pmc)
 	if (!pmc->emulated_counter)
 		return false;
 
-	rdpmcl(pmc->idx, counter);
+	if (pmu->passthrough.optimized)
+		rdpmcl(pmc->idx, counter);
+
 	counter += pmc->emulated_counter;
 	pmc->emulated_counter = 0;
 	counter &= pmc_bitmask(pmc);
-	wrmsrl(MSR_F15H_PERF_CTR + 2 * pmc->idx, counter);
+
+	if (pmu->passthrough.optimized)
+		wrmsrl(MSR_F15H_PERF_CTR + 2 * pmc->idx, counter);
 
 	if (!counter)
 		return true;
