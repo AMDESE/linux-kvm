@@ -88,7 +88,7 @@ static inline u64 pmc_read_counter(struct kvm_pmc *pmc)
 static inline void pmc_write_counter(struct kvm_pmc *pmc, u64 val)
 {
 	/* In passthrough PMU, counter value is the actual value in HW. */
-	if (pmc_to_pmu(pmc)->passthrough)
+	if (pmc_to_pmu(pmc)->passthrough.enabled)
 		pmc->counter = val;
 	else
 		pmc->counter += val - pmc_read_counter(pmc);
@@ -289,7 +289,7 @@ static inline bool pmc_is_globally_enabled(struct kvm_pmc *pmc)
 
 static inline bool is_passthrough_pmu_enabled(struct kvm_vcpu *vcpu)
 {
-	return vcpu_to_pmu(vcpu)->passthrough;
+	return vcpu_to_pmu(vcpu)->passthrough.enabled;
 }
 
 void kvm_pmu_deliver_pmi(struct kvm_vcpu *vcpu);

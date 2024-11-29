@@ -584,7 +584,7 @@ int kvm_pmu_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	switch (msr) {
 	case MSR_CORE_PERF_GLOBAL_STATUS:
 	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS:
-		if (pmu->passthrough &&
+		if (pmu->passthrough.enabled &&
 		    pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp) {
 			rdmsrl(msr, pmu->global_status);
 			pmu->global_status &= ~pmu->global_status_mask;
@@ -643,7 +643,7 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			diff = pmu->global_ctrl ^ data;
 			pmu->global_ctrl = data;
 			/* Passthrough vPMU never reprogram counters. */
-			if (!pmu->passthrough)
+			if (!pmu->passthrough.enabled)
 				reprogram_counters(pmu, diff);
 			else if (pmu->nr_arch_gp_counters < kvm_pmu_cap.num_counters_gp)
 				wrmsrl(msr, pmu->global_ctrl);
@@ -698,7 +698,7 @@ void kvm_pmu_refresh(struct kvm_vcpu *vcpu)
 	 * in the global controls).  Emulate that behavior when refreshing the
 	 * PMU so that userspace doesn't need to manually set PERF_GLOBAL_CTRL.
 	 */
-	if ((pmu->passthrough || kvm_pmu_has_perf_global_ctrl(pmu)) && pmu->nr_arch_gp_counters)
+	if ((pmu->passthrough.enabled || kvm_pmu_has_perf_global_ctrl(pmu)) && pmu->nr_arch_gp_counters)
 		pmu->global_ctrl = GENMASK_ULL(pmu->nr_arch_gp_counters - 1, 0);
 }
 
@@ -715,7 +715,8 @@ void kvm_pmu_init(struct kvm_vcpu *vcpu)
 	static_call(kvm_x86_pmu_init)(vcpu);
 	pmu->event_count = 0;
 	pmu->need_cleanup = false;
-	pmu->passthrough = false;
+	pmu->passthrough.enabled = false;
+	pmu->passthrough.optimized = false;
 	kvm_pmu_refresh(vcpu);
 }
 

@@ -581,7 +581,15 @@ struct kvm_pmu {
 	 */
 	u8 event_count;
 
-	bool passthrough;
+	struct {
+		bool enabled;
+
+		/*
+		 * When optimized, try to perform PMU context switch at vCPU
+		 * entry and exit boundaries.
+		 */
+		bool optimized;
+	} passthrough;
 };
 
 struct kvm_pmu_ops;

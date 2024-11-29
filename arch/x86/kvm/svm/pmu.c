@@ -230,7 +230,7 @@ static void amd_pmu_refresh(struct kvm_vcpu *vcpu)
 	pmu->counter_bitmask[KVM_PMC_FIXED] = 0;
 	pmu->nr_arch_fixed_counters = 0;
 	bitmap_set(pmu->all_valid_pmc_idx, 0, pmu->nr_arch_gp_counters);
-	pmu->passthrough = vcpu->kvm->arch.enable_passthrough_pmu;
+	pmu->passthrough.enabled = vcpu->kvm->arch.enable_passthrough_pmu;
 }
 
 static void amd_pmu_init(struct kvm_vcpu *vcpu)
@@ -268,7 +268,7 @@ static void amd_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
-	int msr_clear = !!(pmu->passthrough);
+	int msr_clear = !!(pmu->passthrough.enabled);
 	int i;
 
 	for (i = 0; i < min(pmu->nr_arch_gp_counters, AMD64_NUM_COUNTERS); i++) {
@@ -306,7 +306,7 @@ static void amd_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
 	 * PMU only owns a subset of counters provided in HW or its version is
 	 * less than 2.
 	 */
-	if (pmu->passthrough && pmu->version > 1 &&
+	if (pmu->passthrough.enabled && pmu->version > 1 &&
 	    pmu->nr_arch_gp_counters == kvm_pmu_cap.num_counters_gp)
 		msr_clear = 1;
 	else
