@@ -1000,5 +1000,8 @@ void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 
 	perf_guest_enter();
 
+	if (!pmu->passthrough.optimized)
+		perf_guest_switch_to_kvm_pmi_vector(kvm_lapic_get_lvtpc_mask(vcpu));
+
 	static_call_cond(kvm_x86_pmu_restore_pmu_context)(vcpu);
 }
