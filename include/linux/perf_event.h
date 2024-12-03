@@ -1716,6 +1716,8 @@ extern int perf_event_period(struct perf_event *event, u64 value);
 extern u64 perf_event_pause(struct perf_event *event, bool reset);
 extern void perf_guest_enter(void);
 extern void perf_guest_exit(void);
+extern bool perf_guest_can_enter_early(void);
+extern bool perf_guest_can_exit_late(void);
 extern bool perf_is_in_guest_passthrough(void);
 #else /* !CONFIG_PERF_EVENTS: */
 static inline void *
@@ -1805,6 +1807,8 @@ static inline u64 perf_event_pause(struct perf_event *event, bool reset)
 }
 static inline void perf_guest_enter(void)				{ }
 static inline void perf_guest_exit(void)				{ }
+static inline bool perf_guest_can_enter_early(void)			{ return false; }
+static inline bool perf_guest_can_exit_late(void);			{ return false; }
 #endif
 
 #if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_CPU_SUP_INTEL)

@@ -5846,6 +5846,88 @@ void perf_guest_exit(void)
 }
 EXPORT_SYMBOL_GPL(perf_guest_exit);
 
+static bool __perf_guest_can_enter_early(struct perf_event_context *ctx)
+{
+	struct perf_event_pmu_context *pmu_ctx;
+	struct pmu *pmu;
+
+	/* If any of the PMUs being passed through have active host events */
+	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
+		pmu = pmu_ctx->pmu;
+		if (!has_vpmu_passthrough_cap(pmu))
+			continue;
+		if (this_cpu_ptr(pmu->cpu_pmu_context)->active_oncpu > 0)
+			return false;
+	}
+
+	return true;
+}
+
+bool perf_guest_can_enter_early(void)
+{
+	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
+	bool ret = false;
+
+	lockdep_assert_irqs_disabled();
+
+
+	perf_ctx_lock(cpuctx, cpuctx->task_ctx);
+
+	if (!__perf_guest_can_enter_early(&cpuctx->ctx))
+		goto unlock;
+
+	if (cpuctx->task_ctx && !__perf_guest_can_enter_early(cpuctx->task_ctx))
+		goto unlock;
+
+	ret = true;
+
+unlock:
+	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(perf_guest_can_enter_early);
+
+static bool __perf_guest_can_exit_late(struct perf_event_context *ctx)
+{
+	struct perf_event_pmu_context *pmu_ctx;
+
+	/* If any of the PMUs being passed through have active host events */
+	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
+		if (!has_vpmu_passthrough_cap(pmu_ctx->pmu))
+			continue;
+		if (pmu_ctx->nr_events > 0)
+			return false;
+	}
+
+	return true;
+}
+
+bool perf_guest_can_exit_late(void)
+{
+	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
+	bool ret = false;
+
+	lockdep_assert_irqs_disabled();
+
+
+	perf_ctx_lock(cpuctx, cpuctx->task_ctx);
+
+	if (!__perf_guest_can_exit_late(&cpuctx->ctx))
+		goto unlock;
+
+	if (cpuctx->task_ctx && !__perf_guest_can_exit_late(cpuctx->task_ctx))
+		goto unlock;
+
+	ret = true;
+
+unlock:
+	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(perf_guest_can_exit_late);
+
 bool perf_is_in_guest_passthrough(void)
 {
 	return __this_cpu_read(__perf_force_exclude_guest);
