@@ -141,7 +141,7 @@ static struct aesgcm_ctx *snp_init_crypto(u8 *key, size_t keylen)
 {
 	struct aesgcm_ctx *ctx;
 
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL_ACCOUNT);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return NULL;
 
@@ -398,7 +398,7 @@ static int get_report(struct snp_guest_dev *snp_dev, struct snp_guest_request_io
 	 * authtag.
 	 */
 	resp_len = sizeof(report_resp->data) + mdesc->ctx->authsize;
-	report_resp = kzalloc(resp_len, GFP_KERNEL_ACCOUNT);
+	report_resp = kzalloc(resp_len, GFP_KERNEL);
 	if (!report_resp)
 		return -ENOMEM;
 
@@ -521,7 +521,7 @@ cmd:
 	 * authtag.
 	 */
 	resp_len = sizeof(report_resp->data) + mdesc->ctx->authsize;
-	report_resp = kzalloc(resp_len, GFP_KERNEL_ACCOUNT);
+	report_resp = kzalloc(resp_len, GFP_KERNEL);
 	if (!report_resp)
 		return -ENOMEM;
 
