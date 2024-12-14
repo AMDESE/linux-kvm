@@ -3821,7 +3821,7 @@ static int merge_sched_in(struct perf_event *event, void *data)
 	 * No events of the passthrough PMU should be scheduled.
 	 */
 	if (__this_cpu_read(__perf_force_exclude_guest) &&
-	    has_vpmu_passthrough_cap(event->pmu))
+	    has_vpmu_passthrough_cap(event->pmu_ctx->pmu))
 		return 0;
 
 	if (group_can_go_on(event, *can_add_hw)) {
