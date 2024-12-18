@@ -233,6 +233,7 @@ static void amd_pmu_refresh(struct kvm_vcpu *vcpu)
 	pmu->nr_arch_fixed_counters = 0;
 	bitmap_set(pmu->all_valid_pmc_idx, 0, pmu->nr_arch_gp_counters);
 	pmu->passthrough.enabled = vcpu->kvm->arch.enable_passthrough_pmu;
+	pmu->passthrough.optimized = pmu->passthrough.enabled;
 }
 
 static void amd_pmu_init(struct kvm_vcpu *vcpu)

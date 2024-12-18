@@ -985,7 +985,14 @@ void kvm_pmu_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
 
 void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+
 	lockdep_assert_irqs_disabled();
+
+	if (!pmu->passthrough.optimized && perf_guest_can_exit_late()) {
+		pmu->passthrough.optimized = true;
+		return;
+	}
 
 	static_call_cond(kvm_x86_pmu_save_pmu_context)(vcpu);
 
@@ -996,7 +1003,14 @@ void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 
 void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+
 	lockdep_assert_irqs_disabled();
+
+	if (pmu->passthrough.optimized && !perf_guest_can_enter_early()) {
+		pmu->passthrough.optimized = false;
+		return;
+	}
 
 	perf_guest_enter();
 
