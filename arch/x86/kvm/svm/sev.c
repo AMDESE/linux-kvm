@@ -3429,6 +3429,8 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		    control->exit_info_1 == control->exit_info_2)
 			goto vmgexit_err;
 		break;
+	case SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST:
+		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
 		goto vmgexit_err;
@@ -4139,6 +4141,77 @@ request_invalid:
 	return 1; /* resume guest */
 }
 
+static int snp_complete_sev_tio_guest_request(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct vmcb_control_area *control = &svm->vmcb->control;
+	gpa_t req_gpa = control->exit_info_1;
+	struct kvm *kvm = vcpu->kvm;
+//	struct kvm_sev_info *sev;
+	u8 msg_type = 0;
+	int ret;
+
+	ret = kvm_read_guest(kvm, req_gpa + offsetof(struct snp_guest_msg_hdr, msg_type),
+			     &msg_type, 1);
+	if (ret) {
+		ret = -EDOM;
+		return ret;
+	}
+
+	if (msg_type == TIO_MSG_TDI_INFO_REQ)
+		vcpu->arch.regs[VCPU_REGS_RDX] = vcpu->run->vmgexit.tio_req.tdi_status;
+
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
+				SNP_GUEST_ERR(0, vcpu->run->vmgexit.tio_req.fw_err));
+
+	return 1; /* Resume guest */
+}
+
+static int snp_sev_tio_guest_request(struct kvm_vcpu *vcpu, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_sev_info *sev;
+	u8 msg_type;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return SEV_RET_INVALID_GUEST;
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	ret = kvm_read_guest(kvm, req_gpa + offsetof(struct snp_guest_msg_hdr, msg_type),
+			     &msg_type, 1);
+	if (ret)
+		return ret;
+
+	vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+	vcpu->run->vmgexit.type = KVM_USER_VMGEXIT_TIO_REQ;
+	vcpu->run->vmgexit.tio_req.guest_rid = vcpu->arch.regs[VCPU_REGS_RCX];
+	vcpu->run->vmgexit.tio_req.flags = 0;
+	if (msg_type == TIO_MSG_TDI_INFO_REQ)
+		vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_STATUS;
+	if (msg_type == TIO_MSG_MMIO_VALIDATE_REQ) {
+		vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_VALIDATE;
+		vcpu->run->vmgexit.tio_req.mmio_gpa = vcpu->arch.regs[VCPU_REGS_RDX];
+	}
+	if (msg_type == TIO_MSG_MMIO_CONFIG_REQ) {
+		vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_CONFIG;
+		vcpu->run->vmgexit.tio_req.mmio_gpa = vcpu->arch.regs[VCPU_REGS_RDX];
+	}
+	if (msg_type == TIO_MSG_SDTE_WRITE_REQ) {
+		if (vcpu->arch.regs[VCPU_REGS_RDX] & SDTE_VALIDATE)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_RUN;
+	}
+
+	vcpu->run->vmgexit.tio_req.data_gpa = vcpu->arch.regs[VCPU_REGS_RAX];
+	vcpu->run->vmgexit.tio_req.data_npages = vcpu->arch.regs[VCPU_REGS_RBX];
+	vcpu->run->vmgexit.tio_req.req_spa = req_gpa;
+	vcpu->run->vmgexit.tio_req.rsp_spa = resp_gpa;
+	vcpu->arch.complete_userspace_io = snp_complete_sev_tio_guest_request;
+
+	return 0; /* Exit KVM */
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -4414,6 +4487,9 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		break;
 	case SVM_VMGEXIT_EXT_GUEST_REQUEST:
 		ret = snp_handle_ext_guest_req(svm, control->exit_info_1, control->exit_info_2);
+		break;
+	case SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST:
+		ret = snp_sev_tio_guest_request(vcpu, control->exit_info_1, control->exit_info_2);
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,

@@ -136,6 +136,29 @@ struct kvm_xen_exit {
 	} u;
 };
 
+struct kvm_user_vmgexit {
+#define KVM_USER_VMGEXIT_TIO_REQ	4
+	__u32 type; /* KVM_USER_VMGEXIT_* type */
+	union {
+		struct {
+			__u32 guest_rid;	/* in */
+			__u16 ret;		/* out */
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_STATUS		BIT(0)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_VALIDATE	BIT(1)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_CONFIG	BIT(2)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_RUN		BIT(3)
+			__u8  flags;		/* in */
+			__u8  tdi_status;	/* out */
+			__u64 data_gpa;		/* in */
+			__u64 data_npages;	/* in/out */
+			__u64 req_spa;		/* in */
+			__u64 rsp_spa;		/* in */
+			__u64 mmio_gpa;		/* in */
+			__s32 fw_err;		/* out */
+		} tio_req;
+	};
+} __packed;
+
 #define KVM_S390_GET_SKEYS_NONE   1
 #define KVM_S390_SKEYS_MAX        1048576
 
@@ -180,6 +203,7 @@ struct kvm_xen_exit {
 #define KVM_EXIT_LOONGARCH_IOCSR  38
 #define KVM_EXIT_MEMORY_FAULT     39
 #define KVM_EXIT_TDX              40
+#define KVM_EXIT_VMGEXIT          41
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -474,6 +498,7 @@ struct kvm_run {
 				} setup_event_notify;
 			};
 		} tdx;
+		struct kvm_user_vmgexit vmgexit;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
