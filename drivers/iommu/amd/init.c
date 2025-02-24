@@ -1978,9 +1978,23 @@ static ssize_t amd_iommu_show_features(struct device *dev,
 }
 static DEVICE_ATTR(features, S_IRUGO, amd_iommu_show_features, NULL);
 
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+static ssize_t amd_iommu_show_dte(struct device *dev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	struct amd_iommu *iommu = dev_to_amd_iommu(dev);
+	return sysfs_emit(buf, "%llx\n", (u64) (iommu->pci_seg ? __pa(iommu->pci_seg->dev_table) : 0));
+}
+static DEVICE_ATTR(dte, S_IRUGO, amd_iommu_show_dte, NULL);
+#endif
+
 static struct attribute *amd_iommu_attrs[] = {
 	&dev_attr_cap.attr,
 	&dev_attr_features.attr,
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+	&dev_attr_dte.attr,
+#endif
 	NULL,
 };
 

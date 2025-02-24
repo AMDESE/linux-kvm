@@ -3305,6 +3305,28 @@ static int proc_stack_depth(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif /* CONFIG_KSTACK_ERASE_METRICS */
 
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+static int proc_pid_pgt(struct seq_file *m, struct pid_namespace *ns,
+			    struct pid *pid, struct task_struct *task)
+{
+	int res = lock_trace(task);
+
+	if (res)
+		return res;
+
+	/* I have no clue how active_mm is different than mm */
+	if (task->active_mm)
+		seq_printf(m, "%llx\n", (u64) __pa(task->active_mm->pgd));
+	else if (task->mm)
+		seq_printf(m, "%llx\n", (u64) __pa(task->mm->pgd));
+	else
+		seq_printf(m, "0\n");
+	unlock_trace(task);
+
+	return 0;
+}
+#endif
+
 /*
  * Thread groups
  */
@@ -3422,6 +3444,9 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_KSM
 	ONE("ksm_merging_pages",  S_IRUSR, proc_pid_ksm_merging_pages),
 	ONE("ksm_stat",  S_IRUSR, proc_pid_ksm_stat),
+#endif
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+	ONE("pgt",    S_IRUSR, proc_pid_pgt),
 #endif
 };
 
