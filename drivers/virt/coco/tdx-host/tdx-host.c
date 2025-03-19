@@ -125,6 +125,7 @@ static void unregister_link_tsm(void *link)
 static int __maybe_unused tdx_connect_init(struct device *dev)
 {
 	struct tsm_dev *link;
+	int ret;
 
 	if (!IS_ENABLED(CONFIG_TDX_CONNECT))
 		return 0;
@@ -145,6 +146,10 @@ static int __maybe_unused tdx_connect_init(struct device *dev)
 
 	if (!(tdx_sysinfo->features.tdx_features0 & TDX_FEATURES0_TDXCONNECT))
 		return 0;
+
+	ret = tdx_enable_ext();
+	if (ret)
+		return dev_err_probe(dev, ret, "Enable extension failed\n");
 
 	link = tsm_register(dev, &tdx_link_ops);
 	if (IS_ERR(link))
