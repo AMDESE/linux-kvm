@@ -327,8 +327,7 @@ static int perf_ibs_init(struct perf_event *event)
 		return -EOPNOTSUPP;
 
 	/* handle exclude_{user,kernel} in the IRQ handler */
-	if (event->attr.exclude_host || event->attr.exclude_guest ||
-	    event->attr.exclude_idle)
+	if (event->attr.exclude_host || event->attr.exclude_idle)
 		return -EINVAL;
 
 	ret = validate_group(event);
