@@ -467,6 +467,343 @@ struct pt_iommu_map_args {
 };
 
 /*
+ * Build an entire sub tree of tables separate from the active table. This is
+ * used to build an entire mapping and then once complete atomically place it in
+ * the table. This is a simplified version of map since we know there is no
+ * concurrency and all the tables start zero filled.
+ */
+static int __build_tree(struct pt_range *range, void *arg, unsigned int level,
+			struct pt_table_p *table)
+{
+	struct pt_state pts = pt_init(range, level, table);
+	struct pt_iommu_map_args *build = arg;
+	int ret;
+
+	for_each_pt_level_entry(&pts) {
+		unsigned int pgsize_lg2 = compute_best_pgsize(&pts, build->oa);
+
+		if (pgsize_lg2) {
+			/* Private population can not see table entries other than 0. */
+			if (PT_WARN_ON(pts.type != PT_ENTRY_EMPTY))
+				return -EADDRINUSE;
+
+			pt_install_leaf_entry(&pts, build->oa, pgsize_lg2,
+					      &build->attrs);
+			pts.type = PT_ENTRY_OA;
+			build->oa += log2_to_int(pgsize_lg2);
+			continue;
+		}
+
+		if (pts.type == PT_ENTRY_EMPTY) {
+			struct pt_table_p *table_mem;
+
+			/* start_incoherent is done after the table is filled */
+			table_mem = table_alloc(&pts, build->attrs.gfp,
+						ALLOC_DEFER_COHERENT_FLUSH);
+			if (IS_ERR(table_mem))
+				return PTR_ERR(table_mem);
+
+			if (!pt_install_table(&pts, virt_to_phys(table_mem),
+					      &build->attrs)) {
+				WARN_ON(true);
+				iommu_free_pages(table_mem);
+				return -EINVAL;
+			}
+
+			if (pts_feature(&pts, PT_FEAT_DMA_INCOHERENT))
+				pt_set_sw_bit_release(&pts,
+						      SW_BIT_CACHE_FLUSH_DONE);
+			iommu_pages_list_add(&build->iotlb_gather->freelist,
+					     table_mem);
+			pts.table_lower = table_mem;
+		} else if (PT_WARN_ON(pts.type != PT_ENTRY_TABLE)) {
+			return -EINVAL;
+		}
+
+		ret = pt_descend(&pts, arg, __build_tree);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+/*
+ * Replace the OA entry patent_pts points at with a tree of OA entries. The tree
+ * is organized so that parent_pts->va is a cut point. The created mappings will
+ * still have optimized page sizes within the cut point.
+ */
+static int replace_cut_table(struct pt_state *parent_pts,
+			     const struct pt_write_attrs *parent_attrs)
+{
+	struct pt_iommu *iommu_table =
+		iommu_from_common(parent_pts->range->common);
+	struct iommu_iotlb_gather freelist;
+	struct pt_iommu_map_args build = {
+		.iotlb_gather = &freelist,
+		.attrs.gfp = parent_attrs->gfp,
+		.oa = pt_entry_oa(parent_pts),
+	};
+	pt_vaddr_t cut_start_va = parent_pts->range->va;
+	pt_vaddr_t entry_start_va =
+		log2_set_mod(cut_start_va, 0, pt_table_item_lg2sz(parent_pts));
+	pt_vaddr_t entry_last_va =
+		log2_set_mod_max(cut_start_va, pt_table_item_lg2sz(parent_pts));
+	struct pt_table_p *table_mem;
+	int ret;
+
+	iommu_iotlb_gather_init(&freelist);
+
+	if (unlikely(!pt_can_have_table(parent_pts)))
+		return -ENXIO;
+
+	if (PT_WARN_ON(entry_start_va == cut_start_va))
+		return -ENXIO;
+
+	if (!pts_feature(parent_pts, PT_FEAT_OA_TABLE_XCHG))
+		return -EOPNOTSUPP;
+
+	table_mem = table_alloc(parent_pts, parent_attrs->gfp,
+				ALLOC_DEFER_COHERENT_FLUSH);
+	if (IS_ERR(table_mem))
+		return PTR_ERR(table_mem);
+	iommu_pages_list_add(&freelist.freelist, table_mem);
+	parent_pts->table_lower = table_mem;
+
+	pt_attr_from_entry(parent_pts, &build.attrs);
+
+	/* Fill from the start of the table to the cut point */
+	ret = pt_walk_descend(parent_pts, entry_start_va, cut_start_va - 1,
+			       __build_tree, &build);
+	if (ret)
+		goto err_free;
+
+	/* Fill from the cut point to the end of the table */
+	ret = pt_walk_descend(parent_pts, cut_start_va, entry_last_va,
+			       __build_tree, &build);
+	if (ret)
+		goto err_free;
+
+	/*
+	 * Avoid double flushing when building a tree privately. All the tree
+	 * memory is initialized now so flush it before installing it.
+	 */
+	if (pts_feature(parent_pts, PT_FEAT_DMA_INCOHERENT)) {
+		ret = iommu_pages_start_incoherent_list(
+			&freelist.freelist, iommu_table->iommu_device);
+		if (ret)
+			goto err_free;
+	}
+
+	if (!pt_install_table(parent_pts, virt_to_phys(table_mem),
+			      parent_attrs)) {
+		ret = -EAGAIN;
+		goto err_free_incoherent;
+	}
+
+	/*
+	 * This thread is the exclusive owner of the entry being split so there
+	 * is no chance for a race but we still have to set the SW bit and flush
+	 * the table.
+	 */
+	if (pts_feature(parent_pts, PT_FEAT_DMA_INCOHERENT)) {
+		flush_writes_item(parent_pts);
+		pt_set_sw_bit_release(parent_pts, SW_BIT_CACHE_FLUSH_DONE);
+	}
+
+	return 0;
+
+err_free_incoherent:
+	/*
+	 * None of the allocated memory was ever reachable outside this function
+	 */
+	if (pts_feature(parent_pts, PT_FEAT_DMA_INCOHERENT))
+		iommu_pages_stop_incoherent_list(&freelist.freelist,
+						 iommu_table->iommu_device);
+
+err_free:
+	iommu_put_pages_list(&freelist.freelist);
+	return ret;
+}
+
+static void replace_cut_entry(const struct pt_state *parent_pts, pt_oaddr_t *poa,
+			      unsigned int start_index, unsigned int end_index)
+{
+	struct pt_range range =
+		pt_range_slice(parent_pts, start_index, end_index);
+	struct pt_state pts =
+		pt_init(&range, parent_pts->level, parent_pts->table);
+	pt_oaddr_t oa = *poa;
+
+	if (start_index == end_index)
+		return;
+
+	_pt_iter_first(&pts);
+	do {
+		unsigned int pgsize_lg2 = compute_best_pgsize(&pts, oa);
+
+		pts.type = pt_load_entry_raw(&pts);
+
+		if (PT_WARN_ON(oa != pt_item_oa(&pts)))
+			continue;
+
+		if (PT_WARN_ON(pts.type != PT_ENTRY_OA) ||
+		    PT_WARN_ON(!pgsize_lg2))
+			continue;
+
+		pt_change_leaf_oasz(&pts, oa, pgsize_lg2);
+		oa += log2_to_int(pgsize_lg2);
+		pts.index += log2_to_int_t(
+			unsigned int, pgsize_lg2 - pt_table_item_lg2sz(&pts));
+	} while (pts.index < end_index);
+	*poa = oa;
+}
+
+/*
+ * When PT_FEAT_OA_SIZE_CHANGE is enabled and the HW supports dirty tracking
+ * then the dirty updates have to be coherent with the CPU page table. The IOTLB
+ * can store a dirty bit and avoid generating a dirty writes but if the IOTLB is
+ * clean then the dirty write to the PTE must fully re-walk the page table and
+ * deposit a dirty flag using cmpxchg that is atomic with the CPU's cmpxchg.
+ *
+ * Under these rules when we split a contiguous entry the HW may continue to
+ * deposit dirty bits anywhere in the old contiguous entry until all entries are
+ * switched to their new sizes. Once the CPU is done switching new dirty bit
+ * updates must land on the correct PTEs with the CPU version of the size,
+ * without any required IOTLB flush.
+ *
+ * Since this is all racy we distribute any dirty bit from any new entry
+ * to all new entries.
+ */
+static __maybe_unused void
+fix_contiguous_dirty(const struct pt_state *parent_pts,
+		     unsigned int start_index, unsigned int end_index)
+{
+	struct pt_range range =
+		pt_range_slice(parent_pts, start_index, end_index);
+	struct pt_state pts =
+		pt_init(&range, parent_pts->level, parent_pts->table);
+	bool dirty = false;
+
+	for_each_pt_level_entry(&pts)
+		dirty |= pt_entry_is_write_dirty(&pts);
+
+	if (!dirty)
+		return;
+
+	pts = pt_init(&range, parent_pts->level, parent_pts->table);
+	for_each_pt_level_entry(&pts) {
+		while (!pt_entry_make_write_dirty(&pts))
+			pt_load_entry(&pts);
+	}
+}
+
+/*
+ * This is a little more complicated than just clearing a contig bit because
+ * some formats have multi-size contigs and we still want to use best page sizes
+ * for each half of the cut. So we remap over the current values with new
+ * correctly sized entries.
+ */
+static void replace_contiguous_entry(const struct pt_state *parent_pts)
+{
+	unsigned int start_index = log2_set_mod(
+		parent_pts->index, 0, pt_entry_num_contig_lg2(parent_pts));
+	unsigned int cut_index = parent_pts->index;
+	unsigned int last_index = log2_set_mod_max(
+		parent_pts->index, pt_entry_num_contig_lg2(parent_pts));
+	pt_oaddr_t oa = pt_entry_oa(parent_pts);
+
+	if (!log2_mod(parent_pts->range->va, pt_table_item_lg2sz(parent_pts))) {
+		/*
+		 * The cut starts at an item boundary, no need to create a
+		 * table.
+		 */
+		replace_cut_entry(parent_pts, &oa, start_index, cut_index);
+		replace_cut_entry(parent_pts, &oa, cut_index, last_index + 1);
+	} else {
+		/* cut_index will be replaced by a table */
+		if (start_index != cut_index)
+			replace_cut_entry(parent_pts, &oa, start_index,
+					  cut_index - 1);
+		replace_cut_entry(parent_pts, &oa, cut_index, cut_index + 1);
+		if (cut_index != last_index)
+			replace_cut_entry(parent_pts, &oa, cut_index + 1,
+					  last_index + 1);
+	}
+
+#if defined(pt_entry_is_write_dirty)
+	fix_contiguous_dirty(parent_pts, start_index, last_index + 1);
+#endif
+	flush_writes_range(parent_pts, start_index, last_index + 1);
+}
+
+static int __cut_mapping(struct pt_range *range, void *arg, unsigned int level,
+			 struct pt_table_p *table)
+{
+	struct pt_state pts = pt_init(range, level, table);
+	const struct pt_write_attrs *cut_attrs = arg;
+
+	while (true) {
+		switch (pt_load_single_entry(&pts)) {
+		case PT_ENTRY_EMPTY:
+			return -ENOENT;
+		case PT_ENTRY_TABLE:
+			return pt_descend(&pts, arg, __cut_mapping);
+		case PT_ENTRY_OA: {
+			int ret;
+
+			/* This entry's OA starts at the cut point, all done */
+			if (!log2_mod(range->va, pt_entry_oa_lg2sz(&pts)))
+				return 0;
+
+			/* This is a contiguous entry, split it down */
+			if (pt_entry_num_contig_lg2(&pts) != ilog2(1)) {
+				if (!pts_feature(&pts, PT_FEAT_OA_SIZE_CHANGE))
+					return -EOPNOTSUPP;
+				replace_contiguous_entry(&pts);
+				continue;
+			}
+
+			/*
+			 * Need to replace an OA with a table. The new table
+			 * will map the same OA as the table item, just with
+			 * smaller granularity.
+			 */
+			ret = replace_cut_table(&pts, cut_attrs);
+			if (ret == -EAGAIN)
+				continue;
+			return ret;
+		}
+		}
+		return -ENOENT;
+	}
+}
+
+/*
+ * FIXME this is currently incompatible with active dirty tracking as we
+ * don't take care to capture or propagate the dirty bits during the mutation.
+ */
+static int NS(cut_mapping)(struct pt_iommu *iommu_table, dma_addr_t cut_iova,
+			   gfp_t gfp)
+{
+	struct pt_common *common = common_from_iommu(iommu_table);
+	struct pt_write_attrs cut_attrs = {
+		.gfp = gfp,
+	};
+	struct pt_range range;
+	int ret;
+
+	ret = pt_iommu_set_prot(common, &cut_attrs, IOMMU_READ);
+	if (ret)
+		return ret;
+
+	ret = make_range(common_from_iommu(iommu_table), &range, cut_iova, 1);
+	if (ret)
+		return ret;
+
+	return pt_walk_range(&range, __cut_mapping, &cut_attrs);
+}
+
+/*
  * This will recursively check any tables in the block to validate they are
  * empty and then free them through the gather.
  */
@@ -869,10 +1206,10 @@ int DOMAIN_NS(map_pages)(struct iommu_domain *domain, unsigned long iova,
 	     oalog2_div(paddr, common->max_oasz_lg2)))
 		return -ERANGE;
 
+	map.attrs.gfp = gfp;
 	ret = pt_iommu_set_prot(common, &map.attrs, prot);
 	if (ret)
 		return ret;
-	map.attrs.gfp = gfp;
 
 	ret = make_range_no_check(common, &range, iova, len);
 	if (ret)
@@ -1099,6 +1436,7 @@ static void NS(deinit)(struct pt_iommu *iommu_table)
 }
 
 static const struct pt_iommu_ops NS(ops) = {
+	.cut_mapping = NS(cut_mapping),
 #if IS_ENABLED(CONFIG_IOMMUFD_DRIVER) && defined(pt_entry_is_write_dirty) && \
 	IS_ENABLED(CONFIG_IOMMUFD_TEST) && defined(pt_entry_make_write_dirty)
 	.set_dirty = NS(set_dirty),

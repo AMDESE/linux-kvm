@@ -10,6 +10,19 @@
 static void do_map(struct kunit *test, pt_vaddr_t va, pt_oaddr_t pa,
 		   pt_vaddr_t len);
 
+static unsigned int next_smallest_pgsz_lg2(struct kunit_iommu_priv *priv,
+					   unsigned int pgsz_lg2)
+{
+	WARN_ON(!(priv->info.pgsize_bitmap & log2_to_int(pgsz_lg2)));
+	pgsz_lg2--;
+	for (; pgsz_lg2 > 0; pgsz_lg2--) {
+		if (priv->info.pgsize_bitmap & log2_to_int(pgsz_lg2))
+			return pgsz_lg2;
+	}
+	WARN_ON(true);
+	return priv->smallest_pgsz_lg2;
+}
+
 struct count_valids {
 	u64 per_size[PT_VADDR_MAX_LG2];
 };
@@ -81,6 +94,20 @@ static void do_unmap(struct kunit *test, pt_vaddr_t va, pt_vaddr_t len)
 
 	ret = iommu_unmap(&priv->domain, va, len);
 	KUNIT_ASSERT_EQ(test, ret, len);
+}
+
+static void do_cut(struct kunit *test, pt_vaddr_t va)
+{
+	struct kunit_iommu_priv *priv = test->priv;
+	const struct pt_iommu_ops *ops = priv->iommu->ops;
+	size_t ret;
+
+	ret = ops->cut_mapping(priv->iommu, va, GFP_KERNEL);
+	if (ret == -EOPNOTSUPP)
+		kunit_skip(
+			test,
+			"ops->cut_mapping not supported (enable CONFIG_DEBUG_GENERIC_PT)");
+	KUNIT_ASSERT_NO_ERRNO_FN(test, "ops->cut_mapping", ret);
 }
 
 static void check_iova(struct kunit *test, pt_vaddr_t va, pt_oaddr_t pa,
@@ -231,6 +258,38 @@ static void test_map_table_to_oa(struct kunit *test)
 
 		KUNIT_ASSERT_EQ(test, count_valids(test), 0);
 	}
+}
+
+static void test_cut_simple(struct kunit *test)
+{
+	struct kunit_iommu_priv *priv = test->priv;
+	pt_oaddr_t paddr =
+		log2_set_mod(priv->test_oa, 0, priv->largest_pgsz_lg2);
+	pt_vaddr_t pgsz = log2_to_int(priv->largest_pgsz_lg2);
+	pt_vaddr_t vaddr = pt_top_range(priv->common).va;
+
+	if (priv->largest_pgsz_lg2 == priv->smallest_pgsz_lg2) {
+		kunit_skip(test, "Format has only one page size");
+		return;
+	}
+
+	/* Chop a big page in half */
+	do_map(test, vaddr, paddr, pgsz);
+	KUNIT_ASSERT_EQ(test, count_valids_single(test, pgsz), 1);
+	do_cut(test, vaddr + pgsz / 2);
+	KUNIT_ASSERT_EQ(test, count_valids(test),
+			log2_to_int(priv->largest_pgsz_lg2 -
+				    next_smallest_pgsz_lg2(
+					    priv, priv->largest_pgsz_lg2)));
+	do_unmap(test, vaddr, pgsz / 2);
+	do_unmap(test, vaddr + pgsz / 2, pgsz / 2);
+
+	/* Replace the first item with the smallest page size */
+	do_map(test, vaddr, paddr, pgsz);
+	KUNIT_ASSERT_EQ(test, count_valids_single(test, pgsz), 1);
+	do_cut(test, vaddr + priv->smallest_pgsz);
+	do_unmap(test, vaddr, priv->smallest_pgsz);
+	do_unmap(test, vaddr + priv->smallest_pgsz, pgsz - priv->smallest_pgsz);
 }
 
 /*
@@ -430,6 +489,7 @@ static struct kunit_case iommu_test_cases[] = {
 	KUNIT_CASE_FMT(test_increase_level),
 	KUNIT_CASE_FMT(test_map_simple),
 	KUNIT_CASE_FMT(test_map_table_to_oa),
+	KUNIT_CASE_FMT(test_cut_simple),
 	KUNIT_CASE_FMT(test_unmap_split),
 	KUNIT_CASE_FMT(test_random_map),
 	KUNIT_CASE_FMT(test_pgsize_boundary),

@@ -92,6 +92,28 @@ enum pt_features {
 	 */
 	PT_FEAT_DMA_INCOHERENT,
 	/**
+	 * @PT_FEAT_OA_SIZE_CHANGE: An OA entry can change size while still
+	 * present. For instance an item can be up-sized to a contiguous entry,
+	 * a contiguous entry down-sized to single items, or the size of a
+	 * contiguous entry changed. Changes are hitless to ongoing translation.
+	 * Otherwise an OA has to be made non present and flushed before it can
+	 * be re-established with a new size.
+	 */
+	PT_FEAT_OA_SIZE_CHANGE,
+	/**
+	 * @PT_FEAT_OA_TABLE_XCHG: A non-contiguous OA entry can be converted to
+	 * a populated table and vice versa while still present. For instance a
+	 * OA with a high size can be replaced with a table mapping the same OA
+	 * using a lower size. Assuming the table has the same translation as
+	 * the OA then it is hitless to ongoing translation. Otherwise an OA or
+	 * populated table can only be stored over a non-present item.
+	 *
+	 * Note this does not apply to tables which have entirely non present
+	 * items. A non present table can be replaced with an OA or vice versa
+	 * freely so long as nothing is made present without flushing.
+	 */
+	PT_FEAT_OA_TABLE_XCHG,
+	/**
 	 * @PT_FEAT_FULL_VA: The table can span the full VA range from 0 to
 	 * PT_VADDR_MAX.
 	 */
