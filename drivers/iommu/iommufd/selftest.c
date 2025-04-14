@@ -485,7 +485,9 @@ mock_domain_alloc_pgtable(struct device *dev,
 		cfg.common.hw_max_oasz_lg2 = 52;
 		cfg.common.features = BIT(PT_FEAT_DYNAMIC_TOP) |
 				      BIT(PT_FEAT_AMDV1_ENCRYPT_TABLES) |
-				      BIT(PT_FEAT_AMDV1_FORCE_COHERENCE);
+				      BIT(PT_FEAT_AMDV1_FORCE_COHERENCE) |
+				      BIT(PT_FEAT_OA_SIZE_CHANGE) |
+				      BIT(PT_FEAT_OA_TABLE_XCHG);
 		cfg.starting_level = 2;
 		mock->domain.ops = &amdv1_ops;
 		rc = pt_iommu_amdv1_init(&mock->amdv1, &cfg, GFP_KERNEL);

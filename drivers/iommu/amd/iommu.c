@@ -2647,7 +2647,9 @@ static struct iommu_domain *amd_iommu_domain_alloc_paging_v1(struct device *dev,
 	 */
 	cfg.common.features = BIT(PT_FEAT_DYNAMIC_TOP) |
 			      BIT(PT_FEAT_AMDV1_ENCRYPT_TABLES) |
-			      BIT(PT_FEAT_AMDV1_FORCE_COHERENCE);
+			      BIT(PT_FEAT_AMDV1_FORCE_COHERENCE) |
+			      BIT(PT_FEAT_OA_SIZE_CHANGE) |
+			      BIT(PT_FEAT_OA_TABLE_XCHG);
 
 	/*
 	 * AMD's IOMMU can flush as many pages as necessary in a single flush.
@@ -2720,7 +2722,8 @@ static struct iommu_domain *amd_iommu_domain_alloc_paging_v2(struct device *dev,
 	domain->pd_mode = PD_MODE_V2;
 	domain->iommu.nid = dev_to_node(dev);
 
-	cfg.common.features = BIT(PT_FEAT_X86_64_AMD_ENCRYPT_TABLES);
+	cfg.common.features = BIT(PT_FEAT_X86_64_AMD_ENCRYPT_TABLES) |
+			      BIT(PT_FEAT_OA_TABLE_XCHG);
 	if (amd_iommu_np_cache)
 		cfg.common.features |= BIT(PT_FEAT_FLUSH_RANGE_NO_GAPS);
 	else
