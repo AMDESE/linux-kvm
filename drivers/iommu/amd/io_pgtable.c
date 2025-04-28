@@ -19,6 +19,7 @@
 #include <linux/dma-mapping.h>
 
 #include <asm/barrier.h>
+#include <asm/sev.h>
 
 #include "amd_iommu_types.h"
 #include "amd_iommu.h"
@@ -338,38 +339,77 @@ static int iommu_v1_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 		goto out;
 
 	while (pgcount > 0) {
-		count = PAGE_SIZE_PTE_COUNT(pgsize);
-		pte   = alloc_pte(pgtable, iova, pgsize, NULL, gfp, &updated);
+		size_t pgsz = pgsize;
+		int level = RMP_PG_SIZE_4K;
+		bool assigned = false;
+		int rc = snp_lookup_rmpentry(paddr >> PAGE_SHIFT, &assigned, &level);
 
-		ret = -ENOMEM;
-		if (!pte)
+		if (!rc && assigned) {
+			/* If RMP entry is 4K, any page size up to (excluding 2MB) will work */
+			if (level == PG_LEVEL_4K)
+				pgsz = min(pgsz, SZ_1M);
+			/* but if 2M, smaller mappings will fail and potentially we need PSMASH_IO */
+			else /* if (level == PG_LEVEL_2M) */
+				pgsz = SZ_2M;
+		} else {
+			/*
+			 * This IOMMU mapping happens before the RMP setup.
+			 * Adjust to the folio size before RMP is set up.
+			 * FIXME: only do this for SNP VMs (requires cfg, see the comment below).
+			 */
+			pgsz = min(pgsz, folio_size(virt_to_folio(__va(paddr))));
+		}
+#if 0
+		/*
+		 * FIXME:
+		 * Cannot perform this check here as cfg is not available and doing this
+		 * check up on the stack in amd_iommu_map_pages() does not work as
+		 * it will have to either:
+		 * - enforce smaller mappings for the entire range  or
+		 * - run a loop like below.
+		 */
+		if ((pgsz & cfg->pgsize_bitmap) == 0) {
+			pr_err("Incompatible page size mask %lx for calculated pagesize %lx (RMP assigned=%d)\n",
+			       cfg->pgsize_bitmap, pgsz, assigned);
 			goto out;
+		}
+#endif
+		for (int j = 0; j < pgsize / pgsz; ++j) {
 
-		for (i = 0; i < count; ++i)
-			free_clear_pte(&pte[i], pte[i], &freelist);
+			count = PAGE_SIZE_PTE_COUNT(pgsz);
+			pte   = alloc_pte(pgtable, iova, pgsz, NULL, gfp, &updated);
 
-		if (!iommu_pages_list_empty(&freelist))
-			updated = true;
+			ret = -ENOMEM;
+			if (!pte)
+				goto out;
 
-		if (count > 1) {
-			__pte = PAGE_SIZE_PTE(__sme_set(paddr), pgsize);
-			__pte |= PM_LEVEL_ENC(7) | IOMMU_PTE_PR | IOMMU_PTE_FC;
-		} else
-			__pte = __sme_set(paddr) | IOMMU_PTE_PR | IOMMU_PTE_FC;
+			for (i = 0; i < count; ++i)
+				free_clear_pte(&pte[i], pte[i], &freelist);
 
-		if (prot & IOMMU_PROT_IR)
-			__pte |= IOMMU_PTE_IR;
-		if (prot & IOMMU_PROT_IW)
-			__pte |= IOMMU_PTE_IW;
+			if (!iommu_pages_list_empty(&freelist))
+				updated = true;
 
-		for (i = 0; i < count; ++i)
-			pte[i] = __pte;
+			if (count > 1) {
+				__pte = PAGE_SIZE_PTE(__sme_set(paddr), pgsz);
+				__pte |= PM_LEVEL_ENC(7) | IOMMU_PTE_PR | IOMMU_PTE_FC;
+			} else
+				__pte = __sme_set(paddr) | IOMMU_PTE_PR | IOMMU_PTE_FC;
 
-		iova  += pgsize;
-		paddr += pgsize;
+			if (prot & IOMMU_PROT_IR)
+				__pte |= IOMMU_PTE_IR;
+			if (prot & IOMMU_PROT_IW)
+				__pte |= IOMMU_PTE_IW;
+
+			for (i = 0; i < count; ++i)
+				pte[i] = __pte;
+
+			iova  += pgsz;
+			paddr += pgsz;
+			if (mapped)
+				*mapped += pgsz;
+		}
+
 		pgcount--;
-		if (mapped)
-			*mapped += pgsize;
 	}
 
 	ret = 0;
