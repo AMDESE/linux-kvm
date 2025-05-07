@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 
 #include "kvm_util.h"
 #include "test_util.h"
@@ -41,7 +42,7 @@ static void test_file_read_write(int fd)
 		    "pwrite on a guest_mem fd should fail");
 }
 
-static void test_mmap_supported(int fd, size_t page_size, size_t total_size)
+static void test_faulting_supported(int fd, size_t page_size, size_t total_size)
 {
 	const char val = 0xaa;
 	char *mem;
@@ -236,6 +237,53 @@ static void test_mmap_not_supported(int fd, size_t page_size, size_t total_size)
 	TEST_ASSERT_EQ(mem, MAP_FAILED);
 }
 
+static void assert_not_faultable(char *address)
+{
+	pid_t child_pid;
+
+	child_pid = fork();
+	TEST_ASSERT(child_pid != -1, "fork failed");
+
+	if (child_pid == 0) {
+		*address = 'A';
+		TEST_FAIL("Child should have exited with a signal");
+	} else {
+		int status;
+
+		waitpid(child_pid, &status, 0);
+
+		TEST_ASSERT(WIFSIGNALED(status),
+			    "Child should have exited with a signal");
+		TEST_ASSERT_EQ(WTERMSIG(status), SIGBUS);
+	}
+}
+
+static void test_faulting_sigbus(int fd, size_t total_size)
+{
+	char *mem;
+	int ret;
+
+	mem = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	TEST_ASSERT(mem != MAP_FAILED, "mmaping() guest memory should pass.");
+
+	assert_not_faultable(mem);
+
+	ret = munmap(mem, total_size);
+	TEST_ASSERT(!ret, "munmap should succeed");
+}
+
+static void test_mmap_supported(int fd, size_t total_size)
+{
+	char *mem;
+	int ret;
+
+	mem = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	TEST_ASSERT(mem != MAP_FAILED, "mmaping() guest memory should pass.");
+
+	ret = munmap(mem, total_size);
+	TEST_ASSERT(!ret, "munmap should succeed");
+}
+
 static void test_file_size(int fd, size_t page_size, size_t total_size)
 {
 	struct stat sb;
@@ -417,10 +465,11 @@ static void test_guest_memfd(unsigned long vm_type)
 	test_file_read_write(fd);
 
 	if (flags & GUEST_MEMFD_FLAG_MMAP) {
-		test_mmap_supported(fd, page_size, total_size);
+		test_mmap_supported(fd, total_size);
 		test_fault_overflow(fd, page_size, total_size);
 		test_mbind(fd, page_size, total_size);
 		test_numa_allocation(fd, page_size, total_size);
+		test_faulting_supported(fd, page_size, total_size);
 	} else {
 		test_mmap_not_supported(fd, page_size, total_size);
 	}
@@ -428,6 +477,13 @@ static void test_guest_memfd(unsigned long vm_type)
 	test_file_size(fd, page_size, total_size);
 	test_fallocate(fd, page_size, total_size);
 	test_invalid_punch_hole(fd, page_size, total_size);
+	if (kvm_has_cap(KVM_CAP_GUEST_MEMFD_CONVERSION)) {
+		int fd2 = vm_create_guest_memfd(vm, total_size,
+						flags | GUEST_MEMFD_FLAG_INIT_PRIVATE);
+
+		test_faulting_sigbus(fd2, total_size);
+		close(fd2);
+	}
 
 	test_guest_memfd_flags(vm, flags);
 
