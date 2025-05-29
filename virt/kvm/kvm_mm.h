@@ -94,4 +94,23 @@ static inline void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 }
 #endif /* CONFIG_KVM_GUEST_MEMFD */
 
+#ifdef CONFIG_KVM_VFIO_DMABUF
+int kvm_vfio_dmabuf_bind(struct kvm *kvm, struct kvm_memory_slot *slot,
+			 unsigned int fd);
+void kvm_vfio_dmabuf_unbind(struct kvm_memory_slot *slot);
+#else
+static inline int kvm_vfio_dmabuf_bind(struct kvm *kvm,
+				       struct kvm_memory_slot *slot,
+				       unsigned int fd);
+{
+	WARN_ON_ONCE(1);
+	return -EIO;
+}
+
+static inline void kvm_vfio_dmabuf_unbind(struct kvm_memory_slot *slot)
+{
+	WARN_ON_ONCE(1);
+}
+#endif /* CONFIG_KVM_VFIO_DMABUF */
+
 #endif /* __KVM_MM_H__ */
