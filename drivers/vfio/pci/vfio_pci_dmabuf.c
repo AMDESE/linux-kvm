@@ -17,6 +17,7 @@ struct vfio_pci_dma_buf {
 	struct dma_buf_phys_vec *phys_vec;
 	struct p2pdma_provider *provider;
 	u32 nr_ranges;
+	int region_index;
 	u8 revoked : 1;
 };
 
@@ -75,11 +76,52 @@ static void vfio_pci_dma_buf_release(struct dma_buf *dmabuf)
 	kfree(priv);
 }
 
+static int vfio_pci_dma_buf_get_pfn(struct dma_buf_attachment *attachment,
+				    pgoff_t pgoff, u64 *pfn, int *max_order)
+{
+	struct vfio_pci_dma_buf *priv = attachment->dmabuf->priv;
+//	struct vfio_region_dma_range *dma_ranges = priv->dma_ranges;
+	struct dma_buf_phys_vec *phys_vec = priv->phys_vec;
+	u64 offset = pgoff << PAGE_SHIFT;
+	int i;
+
+	dma_resv_assert_held(priv->dmabuf->resv);
+
+	if (priv->revoked)
+		return -ENODEV;
+
+	if (offset >= priv->dmabuf->size)
+		return -EINVAL;
+
+//	pr_err("___K___ %s %u: off=%llx\n", __func__, __LINE__, offset);
+//	for (i = 0; i < priv->nr_ranges; i++) {
+//		pr_err("___K___ %s %u: #%d %llx %lx\n", __func__, __LINE__,
+//			i, phys_vec[i].paddr, phys_vec[i].len);
+//	}
+
+	for (i = 0; i < priv->nr_ranges; i++) {
+		if (offset < phys_vec[i].len)
+			break;
+
+		offset -= phys_vec[i].len;
+	}
+
+	*pfn = PHYS_PFN(pci_resource_start(priv->vdev->pdev, priv->region_index) +
+			/*phys_vec[i].offset +*/ offset);
+
+	/* TODO: large page mapping is yet to be supported */
+	if (max_order)
+		*max_order = 0;
+
+	return 0;
+}
+
 static const struct dma_buf_ops vfio_pci_dmabuf_ops = {
 	.attach = vfio_pci_dma_buf_attach,
 	.map_dma_buf = vfio_pci_dma_buf_map,
 	.unmap_dma_buf = vfio_pci_dma_buf_unmap,
 	.release = vfio_pci_dma_buf_release,
+	.get_pfn = vfio_pci_dma_buf_get_pfn,
 };
 
 /*
@@ -249,6 +291,7 @@ int vfio_pci_core_feature_dma_buf(struct vfio_pci_core_device *vdev, u32 flags,
 	priv->vdev = vdev;
 	priv->nr_ranges = get_dma_buf.nr_ranges;
 	priv->size = length;
+	priv->region_index = get_dma_buf.region_index;
 	ret = vdev->pci_ops->get_dmabuf_phys(vdev, &priv->provider,
 					     get_dma_buf.region_index,
 					     priv->phys_vec, dma_ranges,
