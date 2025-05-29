@@ -614,6 +614,10 @@ struct kvm_memory_slot {
 		pgoff_t pgoff;
 	} gmem;
 #endif
+
+#ifdef CONFIG_KVM_VFIO_DMABUF
+	struct dma_buf_attachment *dmabuf_attach;
+#endif
 };
 
 static inline bool kvm_slot_has_gmem(const struct kvm_memory_slot *slot)
@@ -2622,5 +2626,19 @@ static inline void kvm_disable_virtualization(void) { }
  * was being used to back the VM prior to shutdown/destroy.
  */
 void kvm_enqueue_finalize_work(struct kvm *kvm, kvm_finalize_workfn fn, void *data);
+
+#ifdef CONFIG_KVM_VFIO_DMABUF
+int kvm_vfio_dmabuf_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+			    gfn_t gfn, kvm_pfn_t *pfn, int *max_order);
+#else
+static inline int kvm_vfio_dmabuf_get_pfn(struct kvm *kvm,
+					  struct kvm_memory_slot *slot,
+					  gfn_t gfn, kvm_pfn_t *pfn,
+					  int *max_order);
+{
+	KVM_BUG_ON(1, kvm);
+	return -EIO;
+}
+#endif
 
 #endif

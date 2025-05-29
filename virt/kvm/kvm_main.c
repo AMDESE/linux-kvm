@@ -955,6 +955,8 @@ static void kvm_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
 {
 	if (slot->flags & KVM_MEM_GUEST_MEMFD)
 		kvm_gmem_unbind(slot);
+	else if (slot->flags & KVM_MEM_VFIO_DMABUF)
+		kvm_vfio_dmabuf_unbind(slot);
 
 	kvm_destroy_dirty_bitmap(slot);
 
@@ -1614,13 +1616,19 @@ static void kvm_replace_memslot(struct kvm *kvm,
 static int check_memory_region_flags(struct kvm *kvm,
 				     const struct kvm_userspace_memory_region2 *mem)
 {
+	u32 private_mask = KVM_MEM_GUEST_MEMFD | KVM_MEM_VFIO_DMABUF;
+	u32 private_flag = mem->flags & private_mask;
 	u32 valid_flags = KVM_MEM_LOG_DIRTY_PAGES;
 
+	/* private flags are mutually exclusive. */
+	if (private_flag & (private_flag - 1))
+		return -EINVAL;
+
 	if (IS_ENABLED(CONFIG_KVM_GUEST_MEMFD))
-		valid_flags |= KVM_MEM_GUEST_MEMFD;
+		valid_flags |= private_flag;
 
 	/* Dirty logging private memory is not currently supported. */
-	if (mem->flags & KVM_MEM_GUEST_MEMFD)
+	if (private_flag)
 		valid_flags &= ~KVM_MEM_LOG_DIRTY_PAGES;
 
 	/*
@@ -1628,8 +1636,7 @@ static int check_memory_region_flags(struct kvm *kvm,
 	 * read-only memslots have emulated MMIO, not page fault, semantics,
 	 * and KVM doesn't allow emulated MMIO for private memory.
 	 */
-	if (kvm_arch_has_readonly_mem(kvm) &&
-	    !(mem->flags & KVM_MEM_GUEST_MEMFD))
+	if (kvm_arch_has_readonly_mem(kvm) && !private_flag)
 		valid_flags |= KVM_MEM_READONLY;
 
 	if (mem->flags & ~valid_flags)
@@ -2134,6 +2141,21 @@ static int kvm_set_memory_region(struct kvm *kvm,
 		r = kvm_gmem_bind(kvm, new, mem->guest_memfd, mem->guest_memfd_offset);
 		if (r)
 			goto out;
+	} else if (mem->flags & KVM_MEM_VFIO_DMABUF) {
+		if (mem->guest_memfd_offset) {
+			r = -EINVAL;
+			goto out;
+		}
+
+		/*
+		 * Open: May be confusing that store the dmabuf fd parameter in
+		 * kvm_userspace_memory_region2::guest_memfd. But this avoids
+		 * introducing another format for
+		 * IOCTL(KVM_SET_USER_MEMORY_REGIONX).
+		 */
+		r = kvm_vfio_dmabuf_bind(kvm, new, mem->guest_memfd);
+		if (r)
+			goto out;
 	}
 
 	r = kvm_set_memslot(kvm, old, new, change);
@@ -2145,6 +2167,8 @@ static int kvm_set_memory_region(struct kvm *kvm,
 out_unbind:
 	if (mem->flags & KVM_MEM_GUEST_MEMFD)
 		kvm_gmem_unbind(new);
+	else if (mem->flags & KVM_MEM_VFIO_DMABUF)
+		kvm_vfio_dmabuf_unbind(new);
 out:
 	kfree(new);
 	return r;

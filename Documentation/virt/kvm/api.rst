@@ -6331,6 +6331,13 @@ state.  At VM creation time, all memory is shared, i.e. the PRIVATE attribute
 is '0' for all gfns.  Userspace can control whether memory is shared/private by
 toggling KVM_MEMORY_ATTRIBUTE_PRIVATE via KVM_SET_MEMORY_ATTRIBUTES as needed.
 
+Userspace can set KVM_MEM_VFIO_DMABUF in flags to indicate the memory region is
+backed by a userspace unmappable dma_buf exported by VFIO. The backend resource
+is one piece of MMIO region of the device. The slot is unmappable so it is
+allowed to be converted to private. KVM binds the memory region to a given
+dma_buf fd range of [0, memory_size]. For now, the dma_buf fd is filled in
+'guest_memfd' field, and the guest_memfd_offset must be 0;
+
 S390:
 ^^^^^
 

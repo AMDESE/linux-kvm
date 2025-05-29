@@ -114,6 +114,8 @@ config KVM_GENERIC_MEMORY_ATTRIBUTES
 
 config KVM_GUEST_MEMFD
        select XARRAY_MULTI
+       select KVM_PRIVATE_MEM
+       select KVM_VFIO_DMABUF
        bool
 
 config HAVE_KVM_ARCH_GMEM_PREPARE
@@ -132,3 +134,13 @@ config KVM_GMEM_HUGETLB
        select KVM_GUEST_MEMFD
        depends on GUESTMEM_HUGETLB
        bool "Enables using a custom allocator with guest_memfd, see CONFIG_GUESTMEM_HUGETLB"
+
+config KVM_GMEM_SHARED_MEM
+       select KVM_GMEM
+       bool
+       depends on KVM_PRIVATE_MEM
+
+config KVM_VFIO_DMABUF
+       bool
+       select DMA_SHARED_BUFFER
+       select DMABUF_MOVE_NOTIFY
