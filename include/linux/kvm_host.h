@@ -622,7 +622,7 @@ struct kvm_memory_slot {
 
 static inline bool kvm_slot_has_gmem(const struct kvm_memory_slot *slot)
 {
-	return slot && (slot->flags & KVM_MEM_GUEST_MEMFD);
+	return slot && (slot->flags & (KVM_MEM_GUEST_MEMFD | KVM_MEM_VFIO_DMABUF));
 }
 
 static inline bool kvm_slot_is_vfio_dmabuf(const struct kvm_memory_slot *slot)
