@@ -203,6 +203,10 @@ static inline void pt_install_leaf_entry(struct pt_state *pts, pt_oaddr_t oa,
 					 unsigned int oasz_lg2,
 					 const struct pt_write_attrs *attrs);
 
+/* FIXME */
+static inline void pt_change_leaf_oasz(struct pt_state *pts, pt_oaddr_t oa,
+				       unsigned int new_oasz_lg2);
+
 /**
  * pt_install_table() - Write a table entry to the table
  * @pts: Table index to change

@@ -141,6 +141,17 @@ static inline bool pt_has_system_page_size(const struct pt_common *common)
 #endif
 
 /*
+ * If not supplied the format does not support contiguous pages so the leaf oasz
+ * cannot change.
+ */
+#ifndef pt_change_leaf_oasz
+static inline void pt_change_leaf_oasz(struct pt_state *pts, pt_oaddr_t oa,
+				       unsigned int new_oasz_lg2)
+{
+}
+#endif
+
+/*
  * If not supplied by the format then assume only one contiguous size determined
  * by pt_contig_count_lg2()
  */

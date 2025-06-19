@@ -200,6 +200,24 @@ static inline bool pt_table_install32(struct pt_state *pts, u32 table_entry)
 	return ret;
 }
 
+
+/*
+ * Atomically change the value of bits set in mask to new_bits. This is done in
+ * a way that is atomic with concurrent changes by the HW (for instance dirty
+ * bit changes), if applicable.
+ */
+#if !IS_ENABLED(CONFIG_GENERIC_ATOMIC64)
+static inline void pt_entry_replace_bits64(u64 *entry, u64 value, u64 mask,
+					   u64 new_bits)
+{
+	u64 new_entry;
+
+	do {
+		new_entry = (value & ~mask) | new_bits;
+	} while (!try_cmpxchg64(entry, &value, new_entry));
+}
+#endif
+
 #define PT_SUPPORTED_FEATURE(feature_nr) (PT_SUPPORTED_FEATURES & BIT(feature_nr))
 
 static inline bool pt_feature(const struct pt_common *common,

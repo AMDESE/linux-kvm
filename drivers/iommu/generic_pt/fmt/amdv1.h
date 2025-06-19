@@ -234,6 +234,40 @@ amdv1pt_install_leaf_entry(struct pt_state *pts, pt_oaddr_t oa,
 }
 #define pt_install_leaf_entry amdv1pt_install_leaf_entry
 
+static inline void amdv1pt_change_leaf_oasz(struct pt_state *pts, pt_oaddr_t oa,
+					    unsigned int new_oasz_lg2)
+{
+	const u64 entry_mask = AMDV1PT_FMT_OA | AMDV1PT_FMT_NEXT_LEVEL;
+	u64 *entryp = pt_cur_table(pts, u64) + pts->index;
+	unsigned int isz_lg2 = pt_table_item_lg2sz(pts);
+	u64 new_bits;
+
+	if (new_oasz_lg2 == isz_lg2) {
+		new_bits = FIELD_PREP(AMDV1PT_FMT_OA,
+				      log2_div(oa, PT_GRANULE_LG2SZ)) |
+			   FIELD_PREP(AMDV1PT_FMT_NEXT_LEVEL,
+				      AMDV1PT_FMT_NL_DEFAULT);
+		pt_entry_replace_bits64(entryp, pts->entry, entry_mask,
+					new_bits);
+	} else {
+		u64 *end = entryp + log2_to_int(new_oasz_lg2 - isz_lg2);
+
+		new_bits = FIELD_PREP(AMDV1PT_FMT_OA,
+				      log2_div(oa, PT_GRANULE_LG2SZ)) |
+			   FIELD_PREP(AMDV1PT_FMT_NEXT_LEVEL,
+				      AMDV1PT_FMT_NL_SIZE) |
+			   FIELD_PREP(AMDV1PT_FMT_OA,
+				      oalog2_to_int(new_oasz_lg2 -
+						    PT_GRANULE_LG2SZ - 1) -
+					      1);
+
+		for (; entryp != end; entryp++)
+			pt_entry_replace_bits64(entryp, pts->entry, entry_mask,
+						new_bits);
+	}
+}
+#define pt_change_leaf_oasz amdv1pt_change_leaf_oasz
+
 static inline bool amdv1pt_install_table(struct pt_state *pts,
 					 pt_oaddr_t table_pa,
 					 const struct pt_write_attrs *attrs)
