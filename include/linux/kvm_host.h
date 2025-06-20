@@ -2646,4 +2646,6 @@ static inline int kvm_vfio_dmabuf_get_pfn(struct kvm *kvm,
 }
 #endif
 
+struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index);
+
 #endif
