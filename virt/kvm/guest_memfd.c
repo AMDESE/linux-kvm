@@ -1788,7 +1788,7 @@ static void kvm_gmem_evict_inode(struct inode *inode)
 {
 	truncate_inode_pages_final_prepare(inode->i_mapping);
 
-	if (kvm_gmem_has_custom_allocator(inode)) {
+	if (inode->i_mapping->i_private_data && kvm_gmem_has_custom_allocator(inode)) {
 		size_t nr_pages = inode->i_size >> PAGE_SHIFT;
 
 		kvm_gmem_truncate_inode_aligned_pages(inode, 0, nr_pages);
