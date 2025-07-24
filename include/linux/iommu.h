@@ -778,6 +778,7 @@ struct iommu_domain_ops {
 				  unsigned long quirks);
 
 	void (*free)(struct iommu_domain *domain);
+	int (*tsm_enable)(struct iommu_domain *domain, struct device *dev);
 };
 
 /**

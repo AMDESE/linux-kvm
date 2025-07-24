@@ -57,6 +57,8 @@ enum {
 	IOMMUFD_CMD_IOAS_CHANGE_PROCESS = 0x92,
 	IOMMUFD_CMD_VEVENTQ_ALLOC = 0x93,
 	IOMMUFD_CMD_HW_QUEUE_ALLOC = 0x94,
+	IOMMUFD_CMD_VDEVICE_TSM_BIND = 0x95,
+	IOMMUFD_CMD_VDEVICE_TSM_GUEST_REQUEST = 0x96,
 };
 
 /**
@@ -1289,4 +1291,31 @@ struct iommu_hw_queue_alloc {
 	__aligned_u64 length;
 };
 #define IOMMU_HW_QUEUE_ALLOC _IO(IOMMUFD_TYPE, IOMMUFD_CMD_HW_QUEUE_ALLOC)
+
+struct iommu_vdevice_tsm_bind {
+	__u32 size;
+	__u32 viommu_id;
+	__u32 dev_id;
+	__u32 vdevice_id;
+	__s32 kvmfd;
+	__u32 pad;
+} __packed;
+#define IOMMU_VDEVICE_TSM_BIND _IO(IOMMUFD_TYPE, IOMMUFD_CMD_VDEVICE_TSM_BIND)
+
+#define IOMMU_VDEVICE_TSM_GUEST_REQUEST_RUN	BIT(1)
+
+struct iommu_vdevice_tsm_guest_request {
+	__u32 size;
+	__u32 viommu_id;
+	__u32 dev_id;
+	__u32 vdevice_id;
+	__u8 *req;
+	__u8 *rsp;
+	__u32 rsp_len;
+	__u32 req_len;
+	__u32 flags;
+	__s32 fw_err;
+} __packed;
+#define IOMMU_VDEVICE_TSM_GUEST_REQUEST _IO(IOMMUFD_TYPE, IOMMUFD_CMD_VDEVICE_TSM_GUEST_REQUEST)
+
 #endif

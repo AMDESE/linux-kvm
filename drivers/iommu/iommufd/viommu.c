@@ -2,6 +2,10 @@
 /* Copyright (c) 2024, NVIDIA CORPORATION & AFFILIATES
  */
 #include "iommufd_private.h"
+#include "linux/tsm.h"
+#include "linux/pci-tsm.h"
+#include <linux/file.h>
+#include <linux/kvm_host.h>
 
 void iommufd_viommu_destroy(struct iommufd_object *obj)
 {
@@ -110,6 +114,67 @@ out_put_idev:
 	return rc;
 }
 
+static int iommufd_vdevice_tsm_bind(struct iommufd_vdevice *vdev,
+				    struct pci_dev *pdev, int kvmfd)
+{
+	struct fd f;
+	int rc;
+
+	if (vdev->kvm)
+		return -EBUSY;
+
+	f = fdget(kvmfd);
+	if (!fd_file(f))
+		return -EBADF;
+
+	if (!file_is_kvm(fd_file(f))) {
+		rc = -EBADF;
+		goto out_fdput;
+	}
+
+	struct kvm *kvm = fd_file(f)->private_data;
+	if (!kvm || !kvm_get_kvm_safe(kvm)) {
+		rc = -EBADF;
+		goto out_fdput;
+	}
+
+	rc = pci_tsm_bind(pdev, kvm, vdev->virt_id);
+	if (rc) {
+		kvm_put_kvm(kvm);
+		goto out_fdput;
+	}
+
+	vdev->kvm = kvm;
+
+out_fdput:
+	fdput(f);
+
+	return rc;
+}
+
+static void iommufd_vdevice_tsm_unbind(struct iommufd_vdevice *vdev)
+{
+	if (!vdev->kvm)
+		return;
+
+	struct iommufd_device *idev = vdev->idev;
+
+	pci_tsm_unbind(to_pci_dev(idev->dev));
+
+	struct iommu_domain *domain = iommu_get_domain_for_dev(idev->dev);
+
+	WARN_ON_ONCE(!domain);
+	/*
+	 * Not disabling TSM here as the device must have been
+	 * assigned to a blocking domain by now and that should have
+	 * taken care of disabling sDTE.
+	 */
+	WARN_ON_ONCE(domain->type != IOMMU_DOMAIN_BLOCKED);
+
+	kvm_put_kvm(vdev->kvm);
+	vdev->kvm = NULL;
+}
+
 void iommufd_vdevice_abort(struct iommufd_object *obj)
 {
 	struct iommufd_vdevice *vdev =
@@ -118,6 +183,9 @@ void iommufd_vdevice_abort(struct iommufd_object *obj)
 	struct iommufd_device *idev = vdev->idev;
 
 	lockdep_assert_held(&idev->igroup->lock);
+
+	dev_info(idev->dev, "iommufd_vdevice_destroy\n");
+	iommufd_vdevice_tsm_unbind(vdev);
 
 	if (vdev->destroy)
 		vdev->destroy(vdev);
@@ -424,6 +492,111 @@ int iommufd_hw_queue_alloc_ioctl(struct iommufd_ucmd *ucmd)
 	cmd->out_hw_queue_id = hw_queue->obj.id;
 	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
 
+out_put_viommu:
+	iommufd_put_object(ucmd->ictx, &viommu->obj);
+	return rc;
+}
+
+int iommufd_vdevice_tsm_bind_ioctl(struct iommufd_ucmd *ucmd)
+{
+	struct iommu_vdevice_tsm_bind *cmd = ucmd->cmd;
+	struct iommufd_viommu *viommu;
+	struct iommufd_vdevice *vdev;
+	struct iommufd_device *idev;
+	int rc = 0;
+
+	viommu = iommufd_get_viommu(ucmd, cmd->viommu_id);
+	if (IS_ERR(viommu))
+		return PTR_ERR(viommu);
+
+	idev = iommufd_get_device(ucmd, cmd->dev_id);
+	if (IS_ERR(idev)) {
+		rc = PTR_ERR(idev);
+		goto out_put_viommu;
+	}
+
+	vdev = container_of(iommufd_get_object(ucmd->ictx, cmd->vdevice_id,
+					       IOMMUFD_OBJ_VDEVICE),
+			    struct iommufd_vdevice, obj);
+	if (IS_ERR(idev)) {
+		rc = PTR_ERR(idev);
+		goto out_put_dev;
+	}
+
+	if (cmd->kvmfd == -1) {
+		iommufd_vdevice_tsm_unbind(vdev);
+	} else {
+		rc = iommufd_vdevice_tsm_bind(vdev, to_pci_dev(idev->dev),
+					      cmd->kvmfd);
+		if (rc)
+			goto out_put_vdev;
+	}
+
+	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
+out_put_vdev:
+	iommufd_put_object(ucmd->ictx, &vdev->obj);
+out_put_dev:
+	iommufd_put_object(ucmd->ictx, &idev->obj);
+out_put_viommu:
+	iommufd_put_object(ucmd->ictx, &viommu->obj);
+	return rc;
+}
+
+int iommufd_vdevice_tsm_guest_request_ioctl(struct iommufd_ucmd *ucmd)
+{
+	struct iommu_vdevice_tsm_guest_request *cmd = ucmd->cmd;
+	struct iommufd_viommu *viommu;
+	struct iommufd_vdevice *vdev;
+	struct iommufd_device *idev;
+	int rc = 0;
+	u64 fw_err = 0;
+	size_t rsp_len;
+
+	viommu = iommufd_get_viommu(ucmd, cmd->viommu_id);
+	if (IS_ERR(viommu))
+		return PTR_ERR(viommu);
+
+	idev = iommufd_get_device(ucmd, cmd->dev_id);
+	if (IS_ERR(idev)) {
+		rc = PTR_ERR(idev);
+		goto out_put_viommu;
+	}
+
+	vdev = container_of(iommufd_get_object(ucmd->ictx, cmd->vdevice_id,
+					       IOMMUFD_OBJ_VDEVICE),
+			    struct iommufd_vdevice, obj);
+	if (IS_ERR(idev)) {
+		rc = PTR_ERR(idev);
+		goto out_put_dev;
+	}
+
+	if (cmd->flags & IOMMU_VDEVICE_TSM_GUEST_REQUEST_RUN) {
+		struct iommu_domain *domain = iommu_get_domain_for_dev(idev->dev);
+
+		if (WARN_ON_ONCE(!domain)) {
+			rc = -EFAULT;
+			goto out_put_vdev;
+		}
+
+		rc = domain->ops->tsm_enable(domain, idev->dev);
+		if (rc)
+			goto out_put_vdev;
+	}
+
+	rsp_len = pci_tsm_guest_req(to_pci_dev(idev->dev), PCI_TSM_REQ_INFO,
+				    USER_SOCKPTR(cmd->req), cmd->req_len,
+				    USER_SOCKPTR(cmd->rsp), cmd->rsp_len, &fw_err);
+	WARN_ON_ONCE(rsp_len != cmd->rsp_len);
+	cmd->fw_err = fw_err;
+	if (rc)
+		goto out_put_vdev;
+
+	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
+
+out_put_vdev:
+	iommufd_put_object(ucmd->ictx, &vdev->obj);
+out_put_dev:
+	iommufd_put_object(ucmd->ictx, &idev->obj);
 out_put_viommu:
 	iommufd_put_object(ucmd->ictx, &viommu->obj);
 	return rc;
