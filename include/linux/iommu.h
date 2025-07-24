@@ -784,6 +784,7 @@ struct iommu_domain_ops {
 
 	void (*free)(struct iommu_domain *domain);
 	int (*for_each)(struct iommu_domain *domain, iommu_domain_ops_for_each_fn fn, void *arg);
+	int (*tsm_enable)(struct iommu_domain *domain, struct device *dev);
 };
 
 /**

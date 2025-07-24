@@ -111,6 +111,7 @@ struct iommufd_viommu {
 	enum iommu_viommu_type type;
 };
 
+struct kvm;
 struct iommufd_vdevice {
 	struct iommufd_object obj;
 	struct iommufd_viommu *viommu;
@@ -121,6 +122,7 @@ struct iommufd_vdevice {
 	 * AMD IOMMU, and vRID of Intel VT-d
 	 */
 	u64 virt_id;
+	struct kvm *kvm;
 
 	/* Clean up all driver-specific parts of an iommufd_vdevice */
 	void (*destroy)(struct iommufd_vdevice *vdev);
