@@ -173,6 +173,12 @@ static inline bool is_swiotlb_force_bounce(struct device *dev)
 {
 	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
 
+#ifdef CONFIG_CONFIDENTIAL_DEVICES
+	if (device_cc_accepted(dev)) {
+		dev_warn_once(dev, "(TSM) Disable SWIOTLB");
+		return false;
+	}
+#endif
 	return mem && mem->force_bounce;
 }
 

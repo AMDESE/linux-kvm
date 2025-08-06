@@ -19,6 +19,12 @@
 /* Override for DMA direct allocation check - ARCH_HAS_FORCE_DMA_UNENCRYPTED */
 bool force_dma_unencrypted(struct device *dev)
 {
+#ifdef CONFIG_CONFIDENTIAL_DEVICES
+	if (device_cc_accepted(dev)) {
+		dev_warn_once(dev, "(TSM) Disable decryption");
+		return false;
+	}
+#endif
 	/*
 	 * For SEV, all DMA must be to unencrypted addresses.
 	 */
