@@ -173,6 +173,15 @@ static inline bool is_swiotlb_force_bounce(struct device *dev)
 {
 	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
 
+	/*
+	 * CC_ATTR_GUEST_MEM_ENCRYPT enforces SWIOTLB_FORCE in
+	 * swiotlb_init_remap() to allow legacy devices access arbitrary
+	 * VM encrypted memory.
+	 * Skip it for TDISP devices capable of DMA-ing the encrypted memory.
+	 */
+	if (device_cc_accepted(dev))
+		return false;
+
 	return mem && mem->force_bounce;
 }
 
