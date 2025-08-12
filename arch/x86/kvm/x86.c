@@ -12815,6 +12815,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
 				pr_warn_ratelimited(PERF_MEDIATED_PMU_MSG);
 				return r;
 			}
+			pr_err("MANALI: mediated PMU is created.... \n");
 			kvm->arch.created_mediated_pmu = true;
 		} else {
 			kvm->arch.enable_pmu = false;
