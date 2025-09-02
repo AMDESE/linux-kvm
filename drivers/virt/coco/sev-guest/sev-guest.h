@@ -11,6 +11,10 @@ struct snp_guest_dev {
 	struct miscdevice misc;
 
 	struct snp_msg_desc *msg_desc;
+
+	struct tsm_dev *tsmdev;
 };
+
+void sev_guest_tsm_set_ops(bool set, struct snp_guest_dev *snp_dev);
 
 #endif /* __SEV_GUEST_H__ */
