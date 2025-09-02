@@ -149,6 +149,8 @@ struct snp_req_data {
 	unsigned long resp_gpa;
 	unsigned long data_gpa;
 	unsigned int data_npages;
+	unsigned int guest_rid;
+	unsigned long param;
 };
 
 #define MAX_AUTHTAG_LEN		32
@@ -179,6 +181,14 @@ enum msg_type {
 
 	SNP_MSG_TSC_INFO_REQ = 17,
 	SNP_MSG_TSC_INFO_RSP,
+	TIO_MSG_TDI_INFO_REQ        = 0x13,
+	TIO_MSG_TDI_INFO_RSP        = 0x14,
+	TIO_MSG_MMIO_VALIDATE_REQ   = 0x15,
+	TIO_MSG_MMIO_VALIDATE_RSP   = 0x16,
+	TIO_MSG_MMIO_CONFIG_REQ     = 0x17,
+	TIO_MSG_MMIO_CONFIG_RSP     = 0x18,
+	TIO_MSG_SDTE_WRITE_REQ      = 0x19,
+	TIO_MSG_SDTE_WRITE_RSP      = 0x1A,
 
 	SNP_MSG_TYPE_MAX
 };
@@ -528,6 +538,8 @@ int snp_msg_init(struct snp_msg_desc *mdesc, int vmpck_id);
 struct snp_msg_desc *snp_msg_alloc(void);
 void snp_msg_free(struct snp_msg_desc *mdesc);
 int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req);
+struct snp_guest_dev;
+void sev_guest_tsm_set_ops(bool set, struct snp_guest_dev *snp_dev);
 
 int snp_svsm_vtpm_send_command(u8 *buffer);
 

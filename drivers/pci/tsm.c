@@ -836,9 +836,13 @@ static ssize_t blob_show(struct tsm_blob *b, char *buf, ssize_t size)
 static ssize_t report_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
+	struct pci_tsm_pf0 *tsm_pf0;
 
 	if (!pdev->tsm)
 		return sysfs_emit(buf, "\n");
+
+	tsm_pf0 = to_pci_tsm_pf0(pdev->tsm);
+	guard(mutex)(&tsm_pf0->lock);
 
 	return blob_show(pdev->tsm->report, buf, PAGE_SIZE);
 }

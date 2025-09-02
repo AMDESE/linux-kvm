@@ -1050,4 +1050,25 @@ static inline bool sev_is_snp_ciphertext_hiding_supported(void) { return false; 
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
 
+/*
+ * Status codes from TIO_MSG_MMIO_VALIDATE_REQ
+ */
+enum mmio_validate_status {
+	MMIO_VALIDATE_SUCCESS = 0,
+	MMIO_VALIDATE_INVALID_TDI = 1,
+	MMIO_VALIDATE_TDI_UNBOUND = 2,
+	MMIO_VALIDATE_NOT_ASSIGNED = 3, /* At least one page is not assigned to the guest */
+	MMIO_VALIDATE_NOT_IO = 4,	/* At least one page is not an I/O page */
+	MMIO_VALIDATE_NOT_UNIFORM = 5,  /* The Validated bit is not uniformly set for
+					   the MMIO subrange */
+	MMIO_VALIDATE_NOT_IMMUTABLE = 6,/* At least one page does not have immutable bit set
+					   when validated bit is clear */
+	MMIO_VALIDATE_NOT_MAPPED = 7,   /* At least one page is not mapped to the expected GPA */
+	MMIO_VALIDATE_NOT_REPORTED = 8, /* The provided MMIO range ID is not reported in
+					   the interface report */
+	MMIO_VALIDATE_OUT_OF_RANGE = 9, /* The subrange is out the MMIO range in
+					   the interface report */
+	MMIO_VALIDATE_NOT_4K = 10,	/* At least one page is not 4K page size */
+};
+
 #endif	/* __PSP_SEV_H__ */
