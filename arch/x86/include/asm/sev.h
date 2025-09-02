@@ -149,6 +149,8 @@ struct snp_req_data {
 	unsigned long resp_gpa;
 	unsigned long data_gpa;
 	unsigned int data_npages;
+	unsigned int guest_rid;
+	unsigned long param;
 };
 
 #define MAX_AUTHTAG_LEN		32
@@ -179,6 +181,14 @@ enum msg_type {
 
 	SNP_MSG_TSC_INFO_REQ = 17,
 	SNP_MSG_TSC_INFO_RSP,
+	TIO_MSG_TDI_INFO_REQ = 19,
+	TIO_MSG_TDI_INFO_RSP = 20,
+	TIO_MSG_MMIO_VALIDATE_REQ = 21,
+	TIO_MSG_MMIO_VALIDATE_RSP = 22,
+	TIO_MSG_MMIO_CONFIG_REQ = 23,
+	TIO_MSG_MMIO_CONFIG_RSP = 24,
+	TIO_MSG_SDTE_WRITE_REQ = 25,
+	TIO_MSG_SDTE_WRITE_RSP = 26,
 
 	SNP_MSG_TYPE_MAX
 };
@@ -596,6 +606,9 @@ static inline void sev_evict_cache(void *va, int npages)
 		val = bytes[page_idx * PAGE_SIZE + PAGE_SIZE - 1];
 	}
 }
+
+bool sev_tio_ghcb_supported(void);
+int sev_tio_op(u32 guest_rid, unsigned int op, u64 *fw_err, u64 *tdi_id);
 
 #else	/* !CONFIG_AMD_MEM_ENCRYPT */
 

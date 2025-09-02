@@ -136,6 +136,43 @@ static unsigned long snp_tsc_freq_khz __ro_after_init;
 DEFINE_PER_CPU(struct sev_es_runtime_data*, runtime_data);
 DEFINE_PER_CPU(struct sev_es_save_area *, sev_vmsa);
 
+bool sev_tio_ghcb_supported(void)
+{
+	return !!(sev_hv_features & GHCB_HV_FT_SNP_SEV_TIO);
+}
+EXPORT_SYMBOL_GPL(sev_tio_ghcb_supported);
+
+int sev_tio_op(u32 guest_rid, unsigned int op, u64 *fw_err, u64 *tdi_id)
+{
+	struct ghcb_state state;
+	struct es_em_ctxt ctxt;
+	struct ghcb *ghcb;
+	int ret;
+
+	/* __sev_get_ghcb() needs IRQs disabled because it uses per-CPU GHCB. */
+	guard(irqsave)();
+
+	ghcb = __sev_get_ghcb(&state);
+	if (!ghcb)
+		return -EIO;
+
+	vc_ghcb_invalidate(ghcb);
+	ret = sev_es_ghcb_hv_call(ghcb, &ctxt, SVM_VMGEXIT_SEV_TIO_OP,
+				  SVM_VMGEXIT_SEV_TIO_OP_PARAM(guest_rid, op), 0);
+
+	*fw_err = ghcb->save.sw_exit_info_2;
+	if (*fw_err)
+		ret = -EIO;
+
+	if (!ret && op == SVM_VMGEXIT_SEV_TIO_OP_BIND && tdi_id)
+		*tdi_id = ghcb_get_rcx(ghcb);
+
+	__sev_put_ghcb(&state);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sev_tio_op);
+
 /*
  * SVSM related information:
  *   When running under an SVSM, the VMPL that Linux is executing at must be
@@ -1666,6 +1703,11 @@ static int snp_issue_guest_request(struct snp_guest_req *req)
 	if (req->exit_code == SVM_VMGEXIT_EXT_GUEST_REQUEST) {
 		ghcb_set_rax(ghcb, input->data_gpa);
 		ghcb_set_rbx(ghcb, input->data_npages);
+	} else if (req->exit_code == SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST) {
+		ghcb_set_rax(ghcb, input->data_gpa);
+		ghcb_set_rbx(ghcb, input->data_npages);
+		ghcb_set_rcx(ghcb, input->guest_rid);
+		ghcb_set_rdx(ghcb, input->param);
 	}
 
 	ret = sev_es_ghcb_hv_call(ghcb, &ctxt, req->exit_code, input->req_gpa, input->resp_gpa);
@@ -1675,6 +1717,8 @@ static int snp_issue_guest_request(struct snp_guest_req *req)
 	req->exitinfo2 = ghcb->save.sw_exit_info_2;
 	switch (req->exitinfo2) {
 	case 0:
+		if (req->exit_code == SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST)
+			input->param = ghcb_get_rdx(ghcb);
 		break;
 
 	case SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_BUSY):
@@ -1684,6 +1728,10 @@ static int snp_issue_guest_request(struct snp_guest_req *req)
 	case SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_INVALID_LEN):
 		/* Number of expected pages are returned in RBX */
 		if (req->exit_code == SVM_VMGEXIT_EXT_GUEST_REQUEST) {
+			input->data_npages = ghcb_get_rbx(ghcb);
+			ret = -ENOSPC;
+			break;
+		} else if (req->exit_code == SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST) {
 			input->data_npages = ghcb_get_rbx(ghcb);
 			ret = -ENOSPC;
 			break;
@@ -2176,6 +2224,11 @@ retry_request:
 	rc = snp_issue_guest_request(req);
 	switch (rc) {
 	case -ENOSPC:
+		if (req->exit_code == SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST) {
+			pr_warn("SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST => -ENOSPC");
+			break;
+		}
+
 		/*
 		 * If the extended guest request fails due to having too
 		 * small of a certificate data buffer, retry the same
