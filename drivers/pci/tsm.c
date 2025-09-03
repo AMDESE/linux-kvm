@@ -209,6 +209,21 @@ static int pci_tsm_connect(struct pci_dev *pdev, struct tsm_dev *tsm_dev)
 	int rc;
 	struct pci_tsm_pf0 *tsm_pf0;
 	const struct pci_tsm_ops *ops = tsm_dev->pci_ops;
+
+	if (pdev->tsm) {
+		/* Supposedly IDE KEY REFRESH */
+		lockdep_assert_held_write(&pci_tsm_rwsem);
+
+		tsm_pf0 = to_pci_tsm_pf0(pdev->tsm);
+
+		/* mutex_intr assumes connect() is always sysfs/user driven */
+		ACQUIRE(mutex_intr, lock)(&tsm_pf0->lock);
+		if ((rc = ACQUIRE_ERR(mutex_intr, &lock)))
+			return rc;
+
+		return ops->connect(pdev);
+	}
+
 	struct pci_tsm *pci_tsm __free(tsm_remove) = ops->probe(tsm_dev, pdev);
 
 	/* connect() mutually exclusive with subfunction pci_tsm_init() */
@@ -291,9 +306,6 @@ static ssize_t connect_store(struct device *dev, struct device_attribute *attr,
 	ACQUIRE(rwsem_write_kill, lock)(&pci_tsm_rwsem);
 	if ((rc = ACQUIRE_ERR(rwsem_write_kill, &lock)))
 		return rc;
-
-	if (pdev->tsm)
-		return -EBUSY;
 
 	struct tsm_dev *tsm_dev __free(put_tsm_dev) = find_tsm_dev(id);
 	if (!is_link_tsm(tsm_dev))
