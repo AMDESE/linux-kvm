@@ -176,9 +176,6 @@ static int guestmem_hugetlb_unstash_free_metadata(struct folio *folio)
 	stash = xa_erase(&guestmem_hugetlb_stash, pfn);
 	__guestmem_hugetlb_unstash_metadata(&stash->hugetlb_metadata, folio);
 
-	/* Clear stale flags from before the split. */
-	folio_clear_hugetlb_vmemmap_optimized(folio);
-
 	kfree(stash);
 
 	return 0;
