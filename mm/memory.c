@@ -4241,6 +4241,7 @@ void unmap_mapping_folio(struct folio *folio)
 					 last_index, &details);
 	i_mmap_unlock_read(mapping);
 }
+EXPORT_SYMBOL_FOR_MODULES(unmap_mapping_folio, "kvm");
 
 /**
  * unmap_mapping_pages() - Unmap pages from processes.
