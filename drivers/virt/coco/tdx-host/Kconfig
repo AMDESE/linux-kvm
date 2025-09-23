@@ -13,4 +13,5 @@ config TDX_CONNECT
 	bool
 	depends on TDX_HOST_SERVICES
 	depends on PCI_TSM
+	depends on ACPI
 	default TDX_HOST_SERVICES
