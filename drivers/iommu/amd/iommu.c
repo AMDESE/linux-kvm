@@ -31,6 +31,7 @@
 #include <linux/percpu.h>
 #include <linux/io-pgtable.h>
 #include <linux/cc_platform.h>
+#include <linux/iommufd.h>
 #include <asm/irq_remapping.h>
 #include <asm/io_apic.h>
 #include <asm/apic.h>
@@ -2093,7 +2094,21 @@ static void set_dte_entry(struct amd_iommu *iommu,
 		new.data[1] |= DTE_FLAG_IOTLB;
 
 	old_domid = READ_ONCE(dte->data[1]) & DEV_DOMID_MASK;
-	new.data[1] |= domid;
+
+	if (dev_data->tsm_enabled) {
+		/*
+		 * This runs when VFIO is bound to a device but TDI is not yet.
+		 * Ideally TSM should change DTE only when TDI is bound.
+		 */
+		domain->iop.pgtbl.cfg.pgsize_bitmap = PAGE_SIZE | (1ULL << 21);
+		domain->domain.pgsize_bitmap = domain->iop.pgtbl.cfg.pgsize_bitmap;
+		new.data[1] |= 1ULL << (96 - 64);
+		dev_info(dev_data->dev, "Skip DomainID=%x and set bit96 and force pgmask %lx\n",
+			 domid, domain->domain.pgsize_bitmap);
+	} else {
+		dev_info(dev_data->dev, "Not skip DomainID=%x and not set bit96\n", domid);
+		new.data[1] |= domid;
+	}
 
 	/*
 	 * Restore cached persistent DTE bits, which can be set by information
@@ -2597,13 +2612,15 @@ amd_iommu_domain_alloc_paging_flags(struct device *dev, u32 flags,
 {
 	struct amd_iommu *iommu = get_amd_iommu_from_dev(dev);
 	const u32 supported_flags = IOMMU_HWPT_ALLOC_DIRTY_TRACKING |
-						IOMMU_HWPT_ALLOC_PASID;
+						IOMMU_HWPT_ALLOC_PASID |
+						IOMMU_HWPT_ALLOC_NEST_PARENT;
 
 	if ((flags & ~supported_flags) || user_data)
 		return ERR_PTR(-EOPNOTSUPP);
 
 	switch (flags & supported_flags) {
 	case IOMMU_HWPT_ALLOC_DIRTY_TRACKING:
+	case IOMMU_HWPT_ALLOC_DIRTY_TRACKING | IOMMU_HWPT_ALLOC_NEST_PARENT:
 		/* Allocate domain with v1 page table for dirty tracking */
 		if (!amd_iommu_hd_support(iommu))
 			break;
@@ -2638,6 +2655,7 @@ static int blocked_domain_attach_device(struct iommu_domain *domain,
 {
 	struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
 
+	dev_data->tsm_enabled = false;
 	if (dev_data->domain)
 		detach_device(dev);
 
@@ -3038,6 +3056,52 @@ static const struct iommu_dirty_ops amd_dirty_ops = {
 	.read_and_clear_dirty = amd_iommu_read_and_clear_dirty,
 };
 
+static int amd_iommu_tsm_enable(struct iommu_domain *dom, struct device *dev)
+{
+	struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
+
+	if (!dev_data)
+		return -EINVAL;
+
+	dev_data->tsm_enabled = true;
+	/* Always set DTE, either to match sDTE or ignore, but never clear */
+	dev_update_dte(dev_data, true);
+
+	pr_err("___K___ %s %u: %llx\n", __func__, __LINE__, (u64)dev_data);
+
+	return 0;
+}
+
+static void amd_viommu_destroy(struct iommufd_viommu *viommu)
+{
+	dev_err(viommu->iommu_dev->dev, "___K___ %s %u\n", __func__, __LINE__);
+}
+
+static const struct iommufd_viommu_ops amd_viommu_ops = {
+	.destroy = amd_viommu_destroy,
+};
+
+static size_t amd_get_viommu_size(struct device *dev,
+				enum iommu_viommu_type viommu_type)
+{
+	if (viommu_type == IOMMU_VIOMMU_TYPE_AMD_TSM)
+		return sizeof(struct iommufd_viommu);
+
+	return 0;
+}
+
+static int amd_viommu_init(struct iommufd_viommu *viommu,
+			   struct iommu_domain *parent,
+			   const struct iommu_user_data *user_data)
+{
+	dev_err(viommu->iommu_dev->dev, "___K___ %s %u: viommu allocated\n\t%pS\n\t%pS\n\t%pS\n\tTYPE=%x\n",
+		__func__, __LINE__, parent->ops, parent->dirty_ops, parent->owner, parent->type);
+
+	viommu->ops = &amd_viommu_ops;
+
+	return 0;
+}
+
 const struct iommu_ops amd_iommu_ops = {
 	.capable = amd_iommu_capable,
 	.blocked_domain = &blocked_domain,
@@ -3052,6 +3116,8 @@ const struct iommu_ops amd_iommu_ops = {
 	.is_attach_deferred = amd_iommu_is_attach_deferred,
 	.def_domain_type = amd_iommu_def_domain_type,
 	.page_response = amd_iommu_page_response,
+	.get_viommu_size = amd_get_viommu_size,
+	.viommu_init = amd_viommu_init,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= amd_iommu_attach_device,
 		.map_pages	= amd_iommu_map_pages,
@@ -3062,6 +3128,7 @@ const struct iommu_ops amd_iommu_ops = {
 		.iotlb_sync	= amd_iommu_iotlb_sync,
 		.free		= amd_iommu_domain_free,
 		.enforce_cache_coherency = amd_iommu_enforce_cache_coherency,
+		.tsm_enable = amd_iommu_tsm_enable,
 	}
 };
 

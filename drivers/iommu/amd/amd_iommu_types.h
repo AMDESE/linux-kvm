@@ -865,6 +865,7 @@ struct iommu_dev_data {
 	u8 pri_tlp      :1;		  /* PASID TLB required for
 					     PPR completions */
 	u8 ppr          :1;		  /* Enable device PPR support */
+	u8 tsm_enabled  :1;		  /* Enable device to use TSM */
 	bool use_vapic;			  /* Enable device to use vapic mode */
 	bool defer_attach;
 
