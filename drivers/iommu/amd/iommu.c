@@ -31,6 +31,8 @@
 #include <linux/irqdomain.h>
 #include <linux/percpu.h>
 #include <linux/cc_platform.h>
+#include <linux/iommufd.h>
+#include <asm/sev.h>
 #include <asm/irq_remapping.h>
 #include <asm/io_apic.h>
 #include <asm/apic.h>
@@ -84,6 +86,8 @@ static struct iommu_dev_data *find_dev_data(struct amd_iommu *iommu, u16 devid);
 static bool amd_iommu_enforce_cache_coherency(struct iommu_domain *domain);
 static int amd_iommu_set_dirty_tracking(struct iommu_domain *domain,
 					bool enable);
+
+static int amd_iommu_tsm_enable(struct iommu_domain *dom, struct device *dev);
 
 /****************************************************************************
  *
@@ -2107,7 +2111,23 @@ static void set_dte_entry(struct amd_iommu *iommu,
 		new.data[1] |= DTE_FLAG_IOTLB;
 
 	old_domid = READ_ONCE(dte->data[1]) & DEV_DOMID_MASK;
-	new.data[1] |= domid;
+
+	if (dev_data->tsm_enabled) {
+		/*
+		 * This runs when VFIO is bound to a device but TDI is not yet.
+		 * Ideally TSM should change DTE only when TDI is bound.
+		 */
+//		domain->iop.pgtbl.cfg.pgsize_bitmap = PAGE_SIZE | (1ULL << 21);
+//		domain->domain.pgsize_bitmap = domain->iop.pgtbl.cfg.pgsize_bitmap;
+		pr_err("___K___ %s %u: ‘struct protection_domain’ has no member named ‘iop’\n",
+			__func__, __LINE__);
+		new.data[1] |= 1ULL << (96 - 64);
+		dev_info(dev_data->dev, "Skip DomainID=%x and set bit96 and force pgmask %lx\n",
+			 domid, domain->domain.pgsize_bitmap);
+	} else {
+		dev_info(dev_data->dev, "Not skip DomainID=%x and not set bit96\n", domid);
+		new.data[1] |= domid;
+	}
 
 	/*
 	 * Restore cached persistent DTE bits, which can be set by information
@@ -2614,6 +2634,7 @@ static const struct iommu_domain_ops amdv1_ops = {
 	.attach_dev = amd_iommu_attach_device,
 	.free = amd_iommu_domain_free,
 	.enforce_cache_coherency = amd_iommu_enforce_cache_coherency,
+	.tsm_enable = amd_iommu_tsm_enable,
 };
 
 static const struct iommu_dirty_ops amdv1_dirty_ops = {
@@ -2703,6 +2724,7 @@ static const struct iommu_domain_ops amdv2_ops = {
 	 * historically been and lie about enforce_cache_coherencey.
 	 */
 	.enforce_cache_coherency = amd_iommu_enforce_cache_coherency,
+	.tsm_enable = amd_iommu_tsm_enable, // ???????????????
 };
 
 static struct iommu_domain *amd_iommu_domain_alloc_paging_v2(struct device *dev,
@@ -2762,13 +2784,15 @@ amd_iommu_domain_alloc_paging_flags(struct device *dev, u32 flags,
 {
 	struct amd_iommu *iommu = get_amd_iommu_from_dev(dev);
 	const u32 supported_flags = IOMMU_HWPT_ALLOC_DIRTY_TRACKING |
-						IOMMU_HWPT_ALLOC_PASID;
+						IOMMU_HWPT_ALLOC_PASID |
+						IOMMU_HWPT_ALLOC_NEST_PARENT;
 
 	if ((flags & ~supported_flags) || user_data)
 		return ERR_PTR(-EOPNOTSUPP);
 
 	switch (flags & supported_flags) {
 	case IOMMU_HWPT_ALLOC_DIRTY_TRACKING:
+	case IOMMU_HWPT_ALLOC_DIRTY_TRACKING | IOMMU_HWPT_ALLOC_NEST_PARENT:
 		/* Allocate domain with v1 page table for dirty tracking */
 		if (!amd_iommu_hd_support(iommu))
 			break;
@@ -2815,6 +2839,7 @@ static int blocked_domain_attach_device(struct iommu_domain *domain,
 {
 	struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
 
+	dev_data->tsm_enabled = false;
 	if (dev_data->domain)
 		detach_device(dev);
 
@@ -2846,6 +2871,7 @@ static struct protection_domain identity_domain;
 
 static const struct iommu_domain_ops identity_domain_ops = {
 	.attach_dev = amd_iommu_attach_device,
+	.tsm_enable = amd_iommu_tsm_enable,
 };
 
 void amd_iommu_init_identity_domain(void)
@@ -3071,6 +3097,91 @@ static bool amd_iommu_enforce_cache_coherency(struct iommu_domain *domain)
 	return true;
 }
 
+static int amd_iommu_domain_ops_for_each_rmp_smash_fn(struct iommu_domain *domain, void *arg, dma_addr_t iova,
+						      u64 pte, size_t size, bool leaf, u64 *ppte)
+{
+	struct pt_iommu *iommu_table = container_of(domain, struct pt_iommu, domain);
+	int ret, level;
+	bool assigned;
+
+	if (!leaf)
+		return 0;
+
+	ret = snp_lookup_rmpentry((pte & 0x000ffffffffff000ULL) >> PAGE_SHIFT, &assigned, &level);
+	if (ret)
+		return ret; // Or 0?
+
+	if (!assigned)
+		return 0;
+
+	if (level == PG_LEVEL_2M && size < SZ_2M) {
+		/* We need PSMASH here but that is up to KVM to handle */
+		pr_err("RMP sz mismatch - RMP is 2M: @%llx: pte=%03llx_%010llx_%03llx ps=%ld\n",
+		       iova, pte >> 52, (pte >> 12) & 0xffffffffffULL, pte & 0xfff, size);
+		return 0;
+	}
+
+	if (level == PG_LEVEL_4K && size >= SZ_2M) {
+		pr_err("RMP sz mismatch - RMP is 4K: @%llx: pte=%03llx_%010llx_%03llx ps=%ld\n",
+		       iova, pte >> 52, (pte >> 12) & 0xffffffffffULL, pte & 0xfff, size);
+
+		ret = iommu_table->ops->cut_mapping(iommu_table, iova + SZ_4K, GFP_KERNEL);
+		if (ret)
+			pr_err("___K___ %s %u: Failed to CUT at %llx\n", __func__, __LINE__, iova + SZ_4K);
+	}
+
+	return 0;
+}
+
+static int amd_iommu_tsm_enable(struct iommu_domain *dom, struct device *dev)
+{
+	struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
+
+	if (!dev_data)
+		return -EINVAL;
+
+	if (dev_data->tsm_enabled)
+		return 0;
+
+	dev_data->tsm_enabled = true;
+	/* Always set DTE, either to match sDTE or ignore, but never clear */
+	dev_update_dte(dev_data, true);
+
+	pr_err("___K___ %s %u: %llx\n", __func__, __LINE__, (u64)dev_data);
+
+	return iommu_for_each(dom, amd_iommu_domain_ops_for_each_rmp_smash_fn, NULL);
+}
+
+static void amd_viommu_destroy(struct iommufd_viommu *viommu)
+{
+	dev_err(viommu->iommu_dev->dev, "___K___ %s %u\n", __func__, __LINE__);
+}
+
+static const struct iommufd_viommu_ops amd_viommu_ops = {
+	.destroy = amd_viommu_destroy,
+};
+
+static size_t amd_get_viommu_size(struct device *dev,
+				enum iommu_viommu_type viommu_type)
+{
+	if (viommu_type == IOMMU_VIOMMU_TYPE_AMD_TSM)
+		return sizeof(struct iommufd_viommu);
+
+	return 0;
+}
+
+static int amd_viommu_init(struct iommufd_viommu *viommu,
+			   struct iommu_domain *parent,
+			   const struct iommu_user_data *user_data)
+{
+	dev_err(viommu->iommu_dev->dev, "___K___ %s %u: viommu allocated: %pS, %pS, %pS, TYPE=%x\n",
+		__func__, __LINE__, parent->ops, parent->dirty_ops, parent->owner, parent->type);
+
+	viommu->ops = &amd_viommu_ops;
+
+	return 0;
+}
+
 const struct iommu_ops amd_iommu_ops = {
 	.capable = amd_iommu_capable,
 	.blocked_domain = &blocked_domain,
@@ -3085,6 +3196,8 @@ const struct iommu_ops amd_iommu_ops = {
 	.is_attach_deferred = amd_iommu_is_attach_deferred,
 	.def_domain_type = amd_iommu_def_domain_type,
 	.page_response = amd_iommu_page_response,
+	.get_viommu_size = amd_get_viommu_size,
+	.viommu_init = amd_viommu_init,
 };
 
 #ifdef CONFIG_IRQ_REMAP

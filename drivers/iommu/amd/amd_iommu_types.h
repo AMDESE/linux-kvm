@@ -306,8 +306,10 @@
  *
  * 512GB Pages are not supported due to a hardware bug
  * Page sizes >= the 52 bit max physical address of the CPU are not supported.
+ *
+ * TIO: up to 2MB allowed for now (WIP)
  */
-#define AMD_IOMMU_PGSIZES	(GENMASK_ULL(51, 12) ^ SZ_512G)
+#define AMD_IOMMU_PGSIZES	GENMASK_ULL(21, 12)
 
 /* Special mode where page-sizes are limited to 4 KiB */
 #define AMD_IOMMU_PGSIZES_4K	(PAGE_SIZE)
@@ -785,6 +787,7 @@ struct iommu_dev_data {
 	u8 pri_tlp      :1;		  /* PASID TLB required for
 					     PPR completions */
 	u8 ppr          :1;		  /* Enable device PPR support */
+	u8 tsm_enabled  :1;		  /* Enable device to use TSM */
 	bool use_vapic;			  /* Enable device to use vapic mode */
 	bool defer_attach;
 
