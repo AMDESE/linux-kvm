@@ -1202,7 +1202,7 @@ static struct folio *__kvm_gmem_get_pfn(struct file *file,
 
 	*pfn = folio_file_pfn(folio, index);
 	if (max_order)
-		*max_order = 0;
+		*max_order = folio_order(folio);
 
 	return folio;
 }
