@@ -1234,6 +1234,7 @@ static __init int tdx_enable(void)
 	pr_info("TDX-Module initialized\n");
 	return 0;
 }
+subsys_initcall(tdx_enable);
 
 static bool is_pamt_page(unsigned long phys)
 {
@@ -1472,10 +1473,6 @@ void __init tdx_init(void)
 	tdx_guest_keyid_start = tdx_keyid_start + 1;
 	tdx_nr_guest_keyids = nr_tdx_keyids - 1;
 
-	err = tdx_enable();
-	if (err)
-		goto err_enable;
-
 #if defined(CONFIG_ACPI) && defined(CONFIG_SUSPEND)
 	pr_info("Disable ACPI S3. Turn off TDX in the BIOS to use ACPI S3.\n");
 	acpi_suspend_lowlevel = NULL;
@@ -1484,10 +1481,6 @@ void __init tdx_init(void)
 	setup_force_cpu_cap(X86_FEATURE_TDX_HOST_PLATFORM);
 
 	check_tdx_erratum();
-	return;
-
-err_enable:
-	unregister_memory_notifier(&tdx_memory_nb);
 }
 
 const struct tdx_sys_info *tdx_get_sysinfo(void)
