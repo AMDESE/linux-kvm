@@ -1654,6 +1654,9 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	gfn_t gfn;
 	int ret;
 
+	if (kvm_is_realm(vcpu->kvm))
+		return private_memslot_fault(vcpu, fault_ipa, memslot);
+
 	ret = prepare_mmu_memcache(vcpu, true, &memcache);
 	if (ret)
 		return ret;
@@ -2023,22 +2026,6 @@ out_unlock:
 	return ret != -EAGAIN ? ret : 0;
 }
 
-static int realm_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
-		       struct kvm_s2_trans *nested,
-		       struct kvm_memory_slot *memslot, unsigned long hva,
-		       bool fault_is_perm)
-{
-	int ret;
-
-	if (kvm_slot_has_gmem(memslot)) {
-		ret = private_memslot_fault(vcpu, fault_ipa, memslot);
-		if (ret != -EINVAL)
-			return ret;
-	}
-	return user_mem_abort(vcpu, fault_ipa, nested, memslot, hva,
-			      fault_is_perm);
-}
-
 /* Resolve the access fault by making the page young again. */
 static void handle_access_fault(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa)
 {
@@ -2064,6 +2051,12 @@ int kvm_handle_guest_sea(struct kvm_vcpu *vcpu)
 		return 1;
 
 	return kvm_inject_serror(vcpu);
+}
+
+static bool shared_ipa_fault(struct kvm *kvm, phys_addr_t fault_ipa)
+{
+	gpa_t gpa = kvm_gpa_from_fault(kvm, fault_ipa);
+	return (gpa != fault_ipa);
 }
 
 /**
@@ -2231,10 +2224,7 @@ int kvm_handle_guest_abort(struct kvm_vcpu *vcpu)
 	VM_WARN_ON_ONCE(kvm_vcpu_trap_is_permission_fault(vcpu) &&
 			!write_fault && !kvm_vcpu_trap_is_exec_fault(vcpu));
 
-	if (kvm_is_realm(vcpu->kvm))
-		ret = realm_abort(vcpu, fault_ipa, nested, memslot, hva,
-				  esr_fsc_is_permission_fault(esr));
-	else if (kvm_slot_has_gmem(memslot))
+	if (kvm_slot_has_gmem(memslot) && !shared_ipa_fault(vcpu->kvm, fault_ipa))
 		ret = gmem_abort(vcpu, fault_ipa, nested, memslot,
 				 esr_fsc_is_permission_fault(esr));
 	else
