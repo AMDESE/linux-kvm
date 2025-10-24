@@ -1527,61 +1527,6 @@ static int realm_map_ipa(struct kvm *kvm, phys_addr_t ipa,
 	return realm_map_protected(realm, ipa, pfn, map_size, memcache);
 }
 
-static int private_memslot_fault(struct kvm_vcpu *vcpu,
-				 phys_addr_t fault_ipa,
-				 struct kvm_memory_slot *memslot)
-{
-	struct kvm *kvm = vcpu->kvm;
-	gpa_t gpa = kvm_gpa_from_fault(kvm, fault_ipa);
-	gfn_t gfn = gpa >> PAGE_SHIFT;
-	bool is_priv_gfn = kvm_mem_is_private(kvm, gfn);
-	struct kvm_mmu_memory_cache *memcache = &vcpu->arch.mmu_page_cache;
-	struct page *page;
-	kvm_pfn_t pfn;
-	int ret;
-	/*
-	 * For Realms, the shared address is an alias of the private GPA with
-	 * the top bit set. Thus is the fault address matches the GPA then it
-	 * is the private alias.
-	 */
-	bool is_priv_fault = (gpa == fault_ipa);
-
-	if (is_priv_gfn != is_priv_fault) {
-		kvm_prepare_memory_fault_exit(vcpu, gpa, PAGE_SIZE,
-					      kvm_is_write_fault(vcpu), false,
-					      is_priv_fault);
-
-		/*
-		 * KVM_EXIT_MEMORY_FAULT requires an return code of -EFAULT,
-		 * see the API documentation
-		 */
-		return -EFAULT;
-	}
-
-	if (!is_priv_fault) {
-		/* Not a private mapping, handling normally */
-		return -EINVAL;
-	}
-
-	ret = kvm_mmu_topup_memory_cache(memcache,
-					 kvm_mmu_cache_min_pages(vcpu->arch.hw_mmu));
-	if (ret)
-		return ret;
-
-	ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &page, NULL);
-	if (ret)
-		return ret;
-
-	/* FIXME: Should be able to use bigger than PAGE_SIZE mappings */
-	ret = realm_map_ipa(kvm, fault_ipa, pfn, PAGE_SIZE, KVM_PGTABLE_PROT_W,
-			    memcache);
-	if (!ret)
-		return 1; /* Handled */
-
-	put_page(page);
-	return ret;
-}
-
 static bool kvm_vma_is_cacheable(struct vm_area_struct *vma)
 {
 	switch (FIELD_GET(PTE_ATTRINDX_MASK, pgprot_val(vma->vm_page_prot))) {
@@ -1646,6 +1591,7 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	enum kvm_pgtable_walk_flags flags = KVM_PGTABLE_WALK_MEMABORT_FLAGS;
 	enum kvm_pgtable_prot prot = KVM_PGTABLE_PROT_R;
 	struct kvm_pgtable *pgt = vcpu->arch.hw_mmu->pgt;
+	gpa_t gpa = kvm_gpa_from_fault(vcpu->kvm, fault_ipa);
 	unsigned long mmu_seq;
 	struct page *page;
 	struct kvm *kvm = vcpu->kvm;
@@ -1654,8 +1600,28 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	gfn_t gfn;
 	int ret;
 
-	if (kvm_is_realm(vcpu->kvm))
-		return private_memslot_fault(vcpu, fault_ipa, memslot);
+	if (kvm_is_realm(vcpu->kvm)) {
+		/* check for memory attribute mismatch */
+		bool is_priv_gfn = kvm_mem_is_private(kvm, gpa >> PAGE_SHIFT);
+		/*
+		 * For Realms, the shared address is an alias of the private
+		 * PA with the top bit set. Thus is the fault address matches
+		 * the GPA then it is the private alias.
+		 */
+		bool is_priv_fault = (gpa == fault_ipa);
+
+		if (is_priv_gfn != is_priv_fault) {
+			kvm_prepare_memory_fault_exit(vcpu, gpa, PAGE_SIZE,
+						      kvm_is_write_fault(vcpu),
+						      false,
+						      is_priv_fault);
+			/*
+			 * KVM_EXIT_MEMORY_FAULT requires an return code of
+			 * -EFAULT, see the API documentation
+			 */
+			return -EFAULT;
+		}
+	}
 
 	ret = prepare_mmu_memcache(vcpu, true, &memcache);
 	if (ret)
@@ -1664,7 +1630,7 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	if (nested)
 		gfn = kvm_s2_trans_output(nested) >> PAGE_SHIFT;
 	else
-		gfn = fault_ipa >> PAGE_SHIFT;
+		gfn = gpa >> PAGE_SHIFT;
 
 	write_fault = kvm_is_write_fault(vcpu);
 	exec_fault = kvm_vcpu_trap_is_exec_fault(vcpu);
@@ -1677,7 +1643,7 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 
 	ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &page, NULL);
 	if (ret) {
-		kvm_prepare_memory_fault_exit(vcpu, fault_ipa, PAGE_SIZE,
+		kvm_prepare_memory_fault_exit(vcpu, gpa, PAGE_SIZE,
 					      write_fault, exec_fault, false);
 		return ret;
 	}
@@ -1698,15 +1664,25 @@ static int gmem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 	kvm_fault_lock(kvm);
 	if (mmu_invalidate_retry(kvm, mmu_seq)) {
 		ret = -EAGAIN;
-		goto out_unlock;
+		goto out_release_page;
+	}
+
+	if (kvm_is_realm(kvm)) {
+		ret = realm_map_ipa(kvm, fault_ipa, pfn,
+				    PAGE_SIZE, KVM_PGTABLE_PROT_W, memcache);
+		/* if successful don't release the page */
+		if (!ret)
+			goto out_unlock;
+		goto out_release_page;
 	}
 
 	ret = KVM_PGT_FN(kvm_pgtable_stage2_map)(pgt, fault_ipa, PAGE_SIZE,
 						 __pfn_to_phys(pfn), prot,
 						 memcache, flags);
 
-out_unlock:
+out_release_page:
 	kvm_release_faultin_page(kvm, page, !!ret, writable);
+out_unlock:
 	kvm_fault_unlock(kvm);
 
 	if (writable && !ret)
@@ -1933,8 +1909,8 @@ static int user_mem_abort(struct kvm_vcpu *vcpu, phys_addr_t fault_ipa,
 
 	/*
 	 * For now we shouldn't be hitting protected addresses because they are
-	 * handled in private_memslot_fault(). In the future this check may be
-	 * relaxed to support e.g. protected devices.
+	 * handled in gmem_abort(). In the future this check may be relaxed to
+	 * support e.g. protected devices.
 	 */
 	if (vcpu_is_rec(vcpu) &&
 	    kvm_gpa_from_fault(kvm, fault_ipa) == fault_ipa)
