@@ -645,6 +645,39 @@ static int kvm_gmem_mas_preallocate(struct ma_state *mas, u64 attributes,
 	return mas_preallocate(mas, xa_mk_value(attributes), GFP_KERNEL);
 }
 
+static bool kvm_arch_gmem_invalidate_range(struct inode *inode, pgoff_t start, pgoff_t end)
+{
+	struct address_space *mapping = inode->i_mapping;
+	const int filemap_get_folios_refcount = 1;
+	struct folio_batch fbatch;
+	bool safe = true;
+	int i;
+
+	folio_batch_init(&fbatch);
+	while (safe && filemap_get_folios(mapping, &start, end - 1, &fbatch)) {
+		for (i = 0; i < folio_batch_count(&fbatch); ++i) {
+			struct folio *folio = fbatch.folios[i];
+
+			if (folio_ref_count(folio) !=
+			    folio_nr_pages(folio) + filemap_get_folios_refcount) {
+				safe = false;
+				goto out;
+			}
+		}
+
+		for (i = 0; i < folio_batch_count(&fbatch); ++i) {
+			struct folio *folio = fbatch.folios[i];
+
+			kvm_arch_gmem_invalidate(folio_pfn(folio), folio_pfn(folio) + folio_nr_pages(folio));
+		}
+
+out:
+		folio_batch_release(&fbatch);
+	}
+
+	return safe;
+}
+
 static int __kvm_gmem_set_attributes(struct inode *inode, pgoff_t start,
 				     size_t nr_pages, uint64_t attrs,
 				     pgoff_t *err_index)
@@ -683,6 +716,9 @@ static int __kvm_gmem_set_attributes(struct inode *inode, pgoff_t start,
 	}
 
 	kvm_gmem_invalidate_begin(inode, start, end);
+
+	if (!kvm_arch_gmem_invalidate_range(inode, start, end))
+		r = -EAGAIN;
 
 	mas_store_prealloc(&mas, xa_mk_value(attrs));
 
