@@ -27,6 +27,10 @@ static uint nr_ide_streams = TIO_DEFAULT_NR_IDE_STREAMS;
 module_param_named(ide_nr, nr_ide_streams, uint, 0644);
 MODULE_PARM_DESC(ide_nr, "Set the maximum number of IDE streams per PHB");
 
+static bool ide_read_only  = false;
+module_param_named(ide_ro, ide_read_only, bool, 0644);
+MODULE_PARM_DESC(ide_ro, "If true, skips on configuring PF#0 IDE stream, use setpci instead. Does not disable IDE teardown.");
+
 #define dev_to_sp(dev)		((struct sp_device *)dev_get_drvdata(dev))
 #define dev_to_psp(dev)		((struct psp_device *)(dev_to_sp(dev)->psp_data))
 #define dev_to_sev(dev)		((struct sev_device *)(dev_to_psp(dev)->sev_data))
@@ -65,6 +69,11 @@ static int stream_enable(struct pci_ide *ide)
 {
 	struct pci_dev *rp = pcie_find_root_port(ide->pdev);
 	int ret;
+
+	if (ide_read_only) {
+		pci_warn(ide->pdev, "Skipping %s for %s", __func__, pci_name(rp));
+		return 0;
+	}
 
 	ret = pci_ide_stream_enable(rp, ide);
 	if (ret)
@@ -118,6 +127,11 @@ static void stream_setup(struct pci_ide *ide)
 	ide->pdev->ide_tee_limit = 1;
 	rp->ide_cfg = 1;
 	rp->ide_tee_limit = 0;
+
+	if (ide_read_only) {
+		pci_warn(ide->pdev, "Skipping %s for %s", __func__, pci_name(rp));
+		return;
+	}
 
 	pci_warn(ide->pdev, "Forcing CFG/TEE for %s", pci_name(rp));
 	pci_ide_stream_setup(ide->pdev, ide);
