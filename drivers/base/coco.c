@@ -5,6 +5,8 @@
 #include <linux/lockdep.h>
 #include "base.h"
 
+static atomic_t accepted_devices;
+
 /*
  * Confidential devices implement encrypted + integrity protected MMIO and have
  * the ability to issue DMA to encrypted + integrity protected System RAM. The
@@ -34,6 +36,7 @@ int device_cc_accept(struct device *dev)
 	if (dev->driver)
 		return -EBUSY;
 	dev->p->cc_accepted = 1;
+	atomic_add(1, &accepted_devices);
 
 	return 0;
 }
@@ -44,6 +47,7 @@ int device_cc_reject(struct device *dev)
 
 	if (dev->driver)
 		return -EBUSY;
+	atomic_add(-1, &accepted_devices);
 	dev->p->cc_accepted = 0;
 
 	return 0;
@@ -95,3 +99,9 @@ bool device_cc_probe(struct device *dev)
 	return dev->p->cc_accepted;
 }
 EXPORT_SYMBOL_GPL(device_cc_probe);
+
+bool device_cc_accepted_any(void)
+{
+	return atomic_read(&accepted_devices) > 0;
+}
+EXPORT_SYMBOL_GPL(device_cc_accepted_any);

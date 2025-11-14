@@ -1198,6 +1198,7 @@ int device_cc_accept(struct device *dev);
 int device_cc_reject(struct device *dev);
 bool device_cc_accepted(struct device *dev);
 bool device_cc_probe(struct device *dev);
+bool device_cc_accepted_any(void);
 #else
 static inline int device_cc_accept(struct device *dev)
 {
@@ -1214,6 +1215,10 @@ static inline bool device_cc_accepted(struct device *dev)
 	return false;
 }
 static inline bool device_cc_probe(struct device *dev)
+{
+	return false;
+}
+static inline bool device_cc_accepted_any(void)
 {
 	return false;
 }
