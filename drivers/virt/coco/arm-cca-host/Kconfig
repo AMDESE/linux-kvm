@@ -5,10 +5,10 @@
 config ARM_CCA_HOST
 	tristate "Arm CCA Host driver"
 	depends on ARM64
-	depends on PCI_TSM
 	depends on KVM
 	select KEYS
 	select X509_CERTIFICATE_PARSER
+	select PCI_TSM
 	select TSM
 	select AUXILIARY_BUS
 	select CRYPTO_ECDSA
