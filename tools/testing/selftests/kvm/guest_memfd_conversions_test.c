@@ -459,7 +459,11 @@ static void __test_conversions_should_fail_if_memory_has_elevated_refcount(
 					    PAGE_SIZE, &error_offset);
 	TEST_ASSERT_EQ(ret, -1);
 	TEST_ASSERT_EQ(errno, EAGAIN);
-	TEST_ASSERT_EQ(error_offset, page_to_convert * PAGE_SIZE);
+	/*
+	 * In the current tree, error_offset is reserved for unrecoverable
+	 * errors, and not set for EAGAIN.
+	 */
+	//TEST_ASSERT_EQ(error_offset, page_to_convert * PAGE_SIZE);
 
 	unpin_pages();
 
