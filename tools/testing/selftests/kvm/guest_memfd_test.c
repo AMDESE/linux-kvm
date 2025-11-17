@@ -485,7 +485,7 @@ static void test_guest_memfd(unsigned long vm_type)
 		close(fd2);
 	}
 
-	test_guest_memfd_flags(vm, flags);
+	test_guest_memfd_flags(vm, flags | GUEST_MEMFD_FLAG_HUGETLB);
 
 	close(fd);
 	kvm_vm_free(vm);
