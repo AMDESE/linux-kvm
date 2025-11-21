@@ -20,6 +20,17 @@ MODULE_PARM_DESC(xt_support, "Enable XT support for IDE streams (default: true)"
 
 #include "pci.h"
 
+static bool noisy_ide = true;
+
+static int __pci_write_config_dword(const struct pci_dev *dev, int where,
+					 u32 val, const char *f, int n)
+{
+	if (noisy_ide)
+		pci_info(dev, "[%x] Writing %x at %s:%d\n", where, val, f, n);
+	return pci_write_config_dword(dev, where, val);
+}
+#define pci_write_config_dword(d, w, v)  __pci_write_config_dword((d), (w), (v), __func__, __LINE__)
+
 static int __sel_ide_offset(u16 ide_cap, u8 nr_link_ide, u8 stream_index,
 			    u8 nr_ide_mem)
 {
@@ -124,6 +135,8 @@ void pci_ide_init(struct pci_dev *pdev)
 	else
 		nr_link_ide = 0;
 
+	noisy_ide = false;
+
 	nr_ide_mem = 0;
 	nr_streams = 1 + FIELD_GET(PCI_IDE_CAP_SEL_NUM, val);
 	for (u16 i = 0; i < nr_streams; i++) {
@@ -197,6 +210,8 @@ void pci_ide_init(struct pci_dev *pdev)
 	pdev->nr_link_ide = nr_link_ide;
 	pdev->nr_sel_ide = nr_streams;
 	pdev->nr_ide_mem = nr_ide_mem;
+
+	noisy_ide = true;
 }
 
 struct stream_index {

@@ -1380,10 +1380,13 @@ static void pfn_reader_release_pins(struct pfn_reader *pfns)
 					    user->upages_start;
 
 		if (!user->file) {
+			pr_err("___K___ %s %u\n", __func__, __LINE__);
 			unpin_user_pages(user->upages + start_index, npages);
 		} else {
 			long n = user->ufolios_len / sizeof(*user->ufolios);
 
+			pr_err("___K___ %s %u: %ld\n", __func__, __LINE__, n);
+// this is memfd stuff:
 			unpin_folios(user->ufolios_next,
 				     user->ufolios + n - user->ufolios_next);
 		}
@@ -1976,17 +1979,26 @@ int iopt_area_fill_domain(struct iopt_area *area, struct iommu_domain *domain)
 		rc = batch_to_domain(&pfns.batch, domain, area,
 				     pfns.batch_start_index);
 		if (rc)
+		{
+			pr_err("___K___ %s %u\n", __func__, __LINE__);
 			goto out_unmap;
+		}
 		done_end_index = pfns.batch_end_index;
 
 		rc = pfn_reader_next(&pfns);
 		if (rc)
+		{
+			pr_err("___K___ %s %u\n", __func__, __LINE__);
 			goto out_unmap;
+		}
 	}
 
 	rc = pfn_reader_update_pinned(&pfns);
 	if (rc)
+	{
+		pr_err("___K___ %s %u\n", __func__, __LINE__);
 		goto out_unmap;
+	}
 	goto out_destroy;
 
 out_unmap:
@@ -2050,12 +2062,17 @@ int iopt_area_fill_domains(struct iopt_area *area, struct iopt_pages *pages)
 
 			rc = pfn_reader_next(&pfns);
 			if (rc)
+			{
+				pr_err("___K___ %s %u\n", __func__, __LINE__);
 				goto out_unmap;
+			}
 		}
 		rc = pfn_reader_update_pinned(&pfns);
 		if (rc)
+		{
+			pr_err("___K___ %s %u\n", __func__, __LINE__);
 			goto out_unmap;
-
+		}
 		pfn_reader_destroy(&pfns);
 	}
 

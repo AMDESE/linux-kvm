@@ -975,6 +975,10 @@ int firmware_request_nowarn(const struct firmware **firmware, const char *name,
 	ret = _request_firmware(firmware, name, device, NULL, 0, 0,
 				FW_OPT_UEVENT | FW_OPT_NO_WARN);
 	module_put(THIS_MODULE);
+	if (ret >= 0)
+		dev_err(device, "___K___ %s %u: Found %s, ret=%d\n",
+			__func__, __LINE__, name, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(firmware_request_nowarn);

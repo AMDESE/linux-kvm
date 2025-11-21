@@ -2304,6 +2304,14 @@ static int __iommu_device_set_domain(struct iommu_group *group,
 {
 	int ret;
 
+#if 0
+// To Debug Logs
+	dev_err(dev, "___K___ %s %u: dom=%lx type=%x defdom=%lx flags=%x\n", __func__, __LINE__,
+		(ulong) new_domain,
+		new_domain->type,
+		(ulong) group->default_domain,
+		flags);
+#endif
 	/*
 	 * If the device requires IOMMU_RESV_DIRECT then we cannot allow
 	 * the blocking domain to be attached as it does not contain the
@@ -2540,6 +2548,7 @@ int iommu_map_nosync(struct iommu_domain *domain, unsigned long iova,
 	if (!IS_ALIGNED(iova | paddr | size, min_pagesz)) {
 		pr_err("unaligned: iova 0x%lx pa %pa size 0x%zx min_pagesz 0x%x\n",
 		       iova, &paddr, size, min_pagesz);
+		dump_stack();
 		return -EINVAL;
 	}
 

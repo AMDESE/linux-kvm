@@ -998,6 +998,12 @@ static int rmpupdate(u64 pfn, struct rmp_state *state, bool mmio)
 		return -EFAULT;
 	}
 
+	struct rmpentry e = {};
+	get_rmpentry(pfn, &e);
+	if (e.gpa != state->gpa)
+		pr_err("___K___ %s %u: pfn=%llx %llx != %llx\n", __func__, __LINE__,
+			pfn, e.gpa, state->gpa);
+
 	return 0;
 }
 

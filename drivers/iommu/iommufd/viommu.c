@@ -531,6 +531,8 @@ int iommufd_vdevice_tsm_bind_ioctl(struct iommufd_ucmd *ucmd)
 		if (rc)
 			goto out_put_vdev;
 	}
+	dev_err(idev->dev, "___K___ %s %u: set kvm %d rc=%d\n",
+		__func__, __LINE__, cmd->kvmfd, rc);
 
 	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
 out_put_vdev:
