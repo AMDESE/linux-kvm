@@ -4,6 +4,7 @@
 #include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/sockptr.h>
+#include <uapi/linux/tsm.h>
 
 struct pci_tsm;
 struct tsm_dev;
@@ -70,6 +71,9 @@ struct pci_tsm_ops {
 				     sockptr_t req_in, size_t in_len,
 				     sockptr_t req_out, size_t out_len,
 				     u64 *tsm_code);
+		int (*dsm_status)(struct pci_dev *pdev, struct tsm_dsm_status *s);
+		int (*measurements)(struct pci_dev *pdev);
+		int (*tdi_status)(struct pci_dev *pdev, struct tsm_tdi_status *ts);
 	);
 
 	/*
@@ -90,6 +94,7 @@ struct pci_tsm_ops {
 					struct pci_dev *pdev);
 		void (*unlock)(struct pci_tsm *tsm);
 		int (*accept)(struct pci_dev *pdev);
+		int (*status)(struct pci_dev *pdev, struct tsm_tdi_status *ts);
 	);
 };
 
@@ -136,6 +141,13 @@ struct pci_tsm {
 	struct tsm_dev *tsm_dev;
 	struct pci_tdi *tdi;
 	struct tsm_blob *report;
+	// Only valid if dsm==NULL, which is the case of a guest
+	// FIXME: add locking around the blobs below, or reuse pci_tsm_pf0::lock
+	spdm_measurements_nonce_t nonce;
+	bool meas_transcript; /* True if meas is a transcript, false if a single block */
+	struct tsm_blob *meas;
+	struct tsm_blob *certs;
+	struct mutex lock;
 };
 
 /**

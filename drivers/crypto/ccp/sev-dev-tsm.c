@@ -339,9 +339,15 @@ static int dsm_connect(struct pci_dev *pdev)
 {
 	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev);
 	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct spdm_dobj_hdr_meas meashdr = {};
 	u8 ids[TIO_IDE_MAX_TC];
 	u8 tc_mask;
 	int ret;
+
+	if (dev_data->connected) {
+		ret = sev_tio_ide_refresh(dev_data);
+		return sev_tio_spdm_cmd(dsm, ret);
+	}
 
 	if (pci_find_doe_mailbox(pdev, PCI_VENDOR_ID_PCI_SIG,
 				 PCI_DOE_FEATURE_SSESSION) != dsm->tsm.doe_mb) {
@@ -364,11 +370,24 @@ static int dsm_connect(struct pci_dev *pdev)
 	if (ret)
 		goto free_exit;
 
+	tio_save_output(&dsm->tsm.base_tsm.certs, dev_data->output, SPDM_DOBJ_ID_CERTIFICATE, NULL);
+
+	ret = sev_tio_dev_measurements(dev_data, dsm->tsm.base_tsm.nonce);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		goto free_exit;
+
+	if (tio_save_output(&dsm->tsm.base_tsm.meas, dev_data->output,
+			    SPDM_DOBJ_ID_MEASUREMENT, &meashdr))
+		dsm->tsm.base_tsm.meas_transcript = meashdr.type == TIO_SPDM_MEASUREMENTS_LOG;
+
 	streams_enable(dev_data->ide);
 
 	ret = streams_register(dev_data->ide);
 	if (ret)
 		goto free_exit;
+
+	dev_data->connected = true;
 
 	return 0;
 
@@ -399,6 +418,13 @@ static void dsm_disconnect(struct pci_dev *pdev)
 
 	sev_tio_dev_reclaim(dev_data);
 
+	dev_data->connected = false;
+
+	tsm_blob_free(dsm->tsm.base_tsm.meas);
+	dsm->tsm.base_tsm.meas = NULL;
+	tsm_blob_free(dsm->tsm.base_tsm.certs);
+	dsm->tsm.base_tsm.certs = NULL;
+
 	if (dev_data->guest_resp_buf)
 		snp_free_firmware_page(dev_data->guest_resp_buf);
 
@@ -411,6 +437,40 @@ static void dsm_disconnect(struct pci_dev *pdev)
 	streams_disable(dev_data->ide);
 	streams_unregister(dev_data->ide);
 	streams_teardown(dev_data->ide);
+}
+
+static int dsm_status(struct pci_dev *pdev, struct tsm_dsm_status *s)
+{
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	int ret;
+
+	if (!dsm || !dev_data)
+		return -ENODEV;
+
+	ret = sev_tio_dev_status(dev_data, s);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (!ret)
+		WARN_ON(s->device_id != pci_dev_id(pdev));
+
+	return ret;
+}
+
+static int dsm_measurements(struct pci_dev *pdev)
+{
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct spdm_dobj_hdr_meas meashdr = {};
+	int ret;
+
+	ret = sev_tio_dev_measurements(dev_data, dsm->tsm.base_tsm.nonce);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+
+	if (tio_save_output(&dsm->tsm.base_tsm.meas, dev_data->output,
+			    SPDM_DOBJ_ID_MEASUREMENT, &meashdr))
+		dsm->tsm.base_tsm.meas_transcript = meashdr.type == TIO_SPDM_MEASUREMENTS_LOG;
+
+	return 0;
 }
 
 static void tdi_unbind(struct pci_tdi *tdi)
@@ -580,6 +640,7 @@ static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
 			     sockptr_t resp, size_t resplen,
 			     u64 *fw_err)
 {
+	static const spdm_measurements_nonce_t zerononce = {};
 	struct pci_dev *pdev = tdi->pdev;
 	struct tio_tdi *ttdi = container_of(tdi, struct tio_tdi, tdi);
 	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev->tsm->dsm_dev);
@@ -588,8 +649,17 @@ static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
 	struct snp_guest_msg_hdr reqh;
 	int ret;
 
+	BUILD_BUG_ON(sizeof(dsm->tsm.base_tsm.nonce) < sizeof(reqh.authtag));
 	if (reqlen < sizeof(reqh) || copy_from_sockptr(&reqh, req, sizeof(reqh)))
 		return -EINVAL;
+
+	if (reqh.msg_type == TIO_MSG_TDI_INFO_REQ &&
+	    memcmp(zerononce, dsm->tsm.base_tsm.nonce, sizeof(dsm->tsm.base_tsm.nonce))) {
+		ret = dsm_measurements(pdev->tsm->dsm_dev);
+		ret = sev_tio_spdm_cmd(dsm, ret);
+		if (ret)
+			return ret;
+	}
 
 	if (reqh.msg_type == TIO_MSG_MMIO_VALIDATE_REQ || reqh.msg_type == TIO_MSG_SDTE_WRITE_REQ) {
 		ret = tdi_run(dsm, ttdi);
@@ -615,6 +685,36 @@ static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
 	return resplen;
 }
 
+static int tdi_status(struct pci_dev *pdev, struct tsm_tdi_status *ts)
+{
+	struct pci_tdi *tdi = pdev->tsm->tdi;
+	struct tio_tdi *ttdi = container_of(tdi, struct tio_tdi, tdi);
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev->tsm->dsm_dev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct tsm_tdi_tio *tdi_data = &ttdi->data;
+	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
+	int ret;
+
+	if (!pdev->tsm || !tdi)
+		return -ENODEV;
+
+	ret = sev_tio_tdi_info(dev_data, tdi_data, ts);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		return ret;
+
+	ret = sev_tio_tdi_status(dev_data, tdi_data);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		return ret;
+
+	ret = sev_tio_tdi_status_fin(dev_data, tdi_data, &state);
+	if (!ret)
+		ts->state = state;
+
+	return ret;
+}
+
 static struct pci_tsm_ops sev_tsm_ops = {
 	.probe = dsm_probe,
 	.remove = dsm_remove,
@@ -623,6 +723,10 @@ static struct pci_tsm_ops sev_tsm_ops = {
 	.bind = tdi_bind,
 	.unbind = tdi_unbind,
 	.guest_req = guest_request,
+
+	.dsm_status = dsm_status,
+	.measurements = dsm_measurements,
+	.tdi_status = tdi_status,
 };
 
 void sev_tsm_init_locked(struct sev_device *sev, void *tio_status_page)

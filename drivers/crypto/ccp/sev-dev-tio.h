@@ -34,6 +34,7 @@ struct tsm_spdm {
 /* Describes TIO device */
 struct tsm_dsm_tio {
 	u8 cert_slot;
+	bool connected; /* Used to decide whether to DEV_CONNECT or KEY_ROLL */
 	struct sla_addr_t dev_ctx;
 	struct sla_addr_t req;
 	struct sla_addr_t resp;
@@ -88,6 +89,8 @@ struct tio_tdi {
 #define SPDM_DOBJ_ID_NONE		0
 #define SPDM_DOBJ_ID_REQ		1
 #define SPDM_DOBJ_ID_RESP		2
+#define SPDM_DOBJ_ID_CERTIFICATE	4
+#define SPDM_DOBJ_ID_MEASUREMENT	5
 #define SPDM_DOBJ_ID_REPORT		6
 
 struct spdm_dobj_hdr {
@@ -97,6 +100,29 @@ struct spdm_dobj_hdr {
 		u8 minor;
 		u8 major;
 	} version;
+} __packed;
+
+#define TIO_SPDM_CERTIFICATES		1
+
+struct spdm_dobj_hdr_cert {
+	struct spdm_dobj_hdr hdr; /* hdr.id == SPDM_DOBJ_ID_CERTIFICATE */
+	u8 reserved1[6];
+	u16 device_id;
+	u8 segment_id;
+	u8 type; /* TIO_SPDM_CERTIFICATES* */
+	u8 reserved2[12];
+} __packed;
+
+#define TIO_SPDM_MEASUREMENTS		1
+#define TIO_SPDM_MEASUREMENTS_LOG	2
+
+struct spdm_dobj_hdr_meas {
+	struct spdm_dobj_hdr hdr; /* hdr.id == SPDM_DOBJ_ID_MEASUREMENT */
+	u8 reserved1[6];
+	u16 device_id;
+	u8 segment_id;
+	u8 type; /* TIO_SPDM_MEASUREMENTS* */
+	u8 reserved2[12];
 } __packed;
 
 #define TIO_SPDM_REPORT			1
@@ -154,11 +180,16 @@ struct sev_tio_status {
 int sev_tio_init_locked(void *tio_status_page);
 int sev_tio_continue(struct tsm_dsm_tio *dev_data);
 
+int sev_tio_dev_measurements(struct tsm_dsm_tio *dev_data,
+			     spdm_measurements_nonce_t nonce);
+int sev_tio_dev_certificates(struct tsm_dsm_tio *dev_data);
 int sev_tio_dev_create(struct tsm_dsm_tio *dev_data, u16 device_id, u16 root_port_id,
 		       u8 segment_id);
 int sev_tio_dev_connect(struct tsm_dsm_tio *dev_data, u8 tc_mask, u8 ids[8], u8 cert_slot);
 int sev_tio_dev_disconnect(struct tsm_dsm_tio *dev_data, bool force);
 int sev_tio_dev_reclaim(struct tsm_dsm_tio *dev_data);
+int sev_tio_dev_status(struct tsm_dsm_tio *dev_data, struct tsm_dsm_status *status);
+int sev_tio_ide_refresh(struct tsm_dsm_tio *dev_data);
 
 int sev_tio_tdi_create(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
 		       u16 dev_id, u8 rseg);

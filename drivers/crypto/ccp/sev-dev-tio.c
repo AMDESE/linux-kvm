@@ -125,6 +125,12 @@ static size_t sla_dobj_id_to_size(u8 id)
 	case SPDM_DOBJ_ID_RESP:
 		n = sizeof(struct spdm_dobj_hdr_resp);
 		break;
+	case SPDM_DOBJ_ID_CERTIFICATE:
+		n = sizeof(struct spdm_dobj_hdr_cert);
+		break;
+	case SPDM_DOBJ_ID_MEASUREMENT:
+		n = sizeof(struct spdm_dobj_hdr_meas);
+		break;
 	case SPDM_DOBJ_ID_REPORT:
 		n = sizeof(struct spdm_dobj_hdr_report);
 		break;
@@ -168,6 +174,27 @@ static struct spdm_dobj_hdr *sla_to_dobj_hdr_check(struct sla_buffer_hdr *buf, u
 	}
 
 	switch (check_dobjid) {
+	case SPDM_DOBJ_ID_MEASUREMENT:
+		type = ((struct spdm_dobj_hdr_meas *) hdr)->type;
+		switch (type) {
+		case TIO_SPDM_MEASUREMENTS:
+		case TIO_SPDM_MEASUREMENTS_LOG:
+			break;
+		default:
+			pr_err("! ERROR: unexpected measurements type=%d\n", type);
+			goto error;
+		}
+		break;
+	case SPDM_DOBJ_ID_CERTIFICATE:
+		type = ((struct spdm_dobj_hdr_cert *) hdr)->type;
+		switch (type) {
+		case TIO_SPDM_CERTIFICATES:
+			break;
+		default:
+			pr_err("! ERROR: unexpected certificate type=%d\n", type);
+			goto error;
+		}
+		break;
 	case SPDM_DOBJ_ID_REPORT:
 		type = ((struct spdm_dobj_hdr_report *) hdr)->type;
 		switch (type) {
@@ -597,6 +624,13 @@ struct sev_data_tio_guest_request {
 	u64 res_paddr;
 } __packed;
 
+struct sev_data_tio_roll_key {
+	u32 length;				/* In */
+	u32 reserved;
+	struct spdm_ctrl spdm_ctrl;		/* In */
+	struct sla_addr_t dev_ctx_sla;			/* In */
+} __packed;
+
 static struct sla_buffer_hdr *sla_buffer_map(struct sla_addr_t sla)
 {
 	struct sla_buffer_hdr *buf;
@@ -844,6 +878,16 @@ bool tio_save_output(struct tsm_blob **blob, struct sla_addr_t sla,
 		if (dobjhdr)
 			memcpy(dobjhdr, hdr, SPDM_DOBJ_HDR_SIZE(hdr));
 	}
+
+//	dobj_dump(buf);
+//
+//	if ((tiolog & TIO_LOG_DOBJ) && (hdr->id == check_dobjid) &&
+//	    (check_dobjid == SPDM_DOBJ_ID_REPORT) && *blob) {
+//		char *buf1 = kmalloc(PAGE_SIZE, GFP_KERNEL);
+//		if (tsm_report_gen(*blob, buf1, PAGE_SIZE) > 0)
+//			pr_info("Interface report:\n%s", buf1);
+//		kfree(buf1);
+//	}
 
 	sla_buffer_unmap(sla, buf);
 
@@ -1169,6 +1213,88 @@ int sev_tio_dev_disconnect(struct tsm_dsm_tio *dev_data, bool force)
 			      &dev_data->psp_ret, dev_data);
 }
 
+int sev_tio_dev_measurements(struct tsm_dsm_tio *dev_data,
+			     spdm_measurements_nonce_t nonce)
+{
+	struct sev_data_tio_dev_meas meas = {
+		.length = sizeof(meas),
+		.flags = TIO_DEV_MEAS_FLAG_RAW_BITSTREAM,
+	};
+
+	if (WARN_ON(IS_SLA_NULL(dev_data->dev_ctx)))
+		return -EFAULT;
+
+	spdm_ctrl_init(&meas.spdm_ctrl, dev_data);
+	meas.dev_ctx_sla = dev_data->dev_ctx;
+	memcpy(meas.meas_nonce, nonce, sizeof(meas.meas_nonce));
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_DEV_MEASUREMENTS, &meas, sizeof(meas),
+			      &dev_data->psp_ret, dev_data);
+}
+
+int sev_tio_dev_certificates(struct tsm_dsm_tio *dev_data)
+{
+	struct sev_data_tio_dev_certs c = {
+		.length = sizeof(c),
+	};
+
+	if (WARN_ON(IS_SLA_NULL(dev_data->dev_ctx)))
+		return -EFAULT;
+
+	spdm_ctrl_init(&c.spdm_ctrl, dev_data);
+	c.dev_ctx_sla = dev_data->dev_ctx;
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_DEV_CERTIFICATES, &c, sizeof(c),
+			      &dev_data->psp_ret, dev_data);
+}
+
+int sev_tio_dev_status(struct tsm_dsm_tio *dev_data, struct tsm_dsm_status *s)
+{
+	struct sev_tio_dev_status *status =
+		DATA_PG(struct sev_tio_dev_status, dev_data);
+	struct sev_data_tio_dev_status data_status = {
+		.length = sizeof(data_status),
+		.dev_ctx_paddr = dev_data->dev_ctx,
+		.status_paddr = __psp_pa(status),
+	};
+	int ret;
+
+	if (!dev_data)
+		return -ENODEV;
+
+	if (IS_SLA_NULL(dev_data->dev_ctx))
+		return -ENXIO;
+
+	ret = sev_do_cmd(SEV_CMD_TIO_DEV_STATUS, &data_status, &dev_data->psp_ret);
+	if (ret)
+		return ret;
+
+	s->ctx_state = status->ctx_state;
+	s->device_id = status->device_id;
+	s->tc_mask = status->tc_mask;
+	memcpy(s->ide_stream_id, status->ide_stream_id, sizeof(status->ide_stream_id));
+	s->certs_slot = status->certs_slot;
+	s->no_fw_update = !!(status->p2_flags & SEV_TIO_DEV_STATUS_P2_FLAG_NO_FW_UPDATE);
+
+	return 0;
+}
+
+int sev_tio_ide_refresh(struct tsm_dsm_tio *dev_data)
+{
+	struct sev_data_tio_roll_key rk = {
+		.length = sizeof(rk),
+		.dev_ctx_sla = dev_data->dev_ctx,
+	};
+
+	if (WARN_ON(IS_SLA_NULL(dev_data->dev_ctx)))
+		return -EFAULT;
+
+	spdm_ctrl_init(&rk.spdm_ctrl, dev_data);
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_ROLL_KEY, &rk, sizeof(rk),
+			      &dev_data->psp_ret, dev_data);
+}
+
 int sev_tio_tdi_create(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
 		       u16 dev_id, u8 rseg)
 {
@@ -1380,6 +1506,93 @@ int sev_tio_guest_request(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_
 			      &dev_data->psp_ret, dev_data);
 }
 
+#define SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_VALID		BIT(0)
+#define SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_FRESH		BIT(1)
+#define SEV_TIO_TDI_INFO_P1_TDI_STATUS_MASK		GENMASK(3, 2)
+#define SEV_TIO_TDI_INFO_P1_TDI_STATUS_SHIFT		2
+#define SEV_TIO_TDI_INFO_P2_FLAG_NO_FW_UPDATE		BIT(0)
+#define SEV_TIO_TDI_INFO_P2_FLAG_CACHE_LINE_SIZE		BIT(1)
+#define SEV_TIO_TDI_INFO_P2_FLAG_LOCK_MSIX		BIT(2)
+#define SEV_TIO_TDI_INFO_P2_FLAG_BIND_P2P			BIT(3)
+#define SEV_TIO_TDI_INFO_P2_FLAG_ALL_REQUEST_REDIRECT	BIT(4)
+
+struct sev_tio_tdi_info_data {
+	u32 length;
+	struct tdisp_interface_id interface_id;
+	u32 p1_flags; /* SEV_TIO_TDI_INFO_P1_FLAG_xxx and tdi_status in bits 3:2 */
+	u32 p2_flags; /* SEV_TIO_TDI_INFO_P2_FLAG_xxx */
+	u64 spdm_algos;
+	u8 certs_digest[48];
+	u8 meas_digest[48];
+	u8 interface_report_digest[48];
+	u64 intf_report_counter;
+	u32 asid; /* ASID of the guest that this device is assigned to. Valid if CTX_STATE=1 */
+	u8 reserved2[4];
+} __packed;
+
+struct sev_data_tio_tdi_info {
+	u32 length;
+	u32 reserved1;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 status_paddr;
+	u8 reserved2[16];
+} __packed;
+
+int sev_tio_tdi_info(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+		     struct tsm_tdi_status *ts)
+{
+	struct sev_tio_tdi_info_data *data =
+		DATA_PG(struct sev_tio_tdi_info_data, dev_data);
+	struct sev_data_tio_tdi_info info = {
+		.length = sizeof(info),
+		.dev_ctx_sla = dev_data->dev_ctx,
+		.tdi_ctx_sla = tdi_data->tdi_ctx,
+		.status_paddr = __psp_pa(data),
+	};
+	int ret;
+
+	if (IS_SLA_NULL(dev_data->dev_ctx) || IS_SLA_NULL(tdi_data->tdi_ctx))
+		return -ENXIO;
+
+	ret = sev_do_cmd(SEV_CMD_TIO_TDI_INFO, &info, &dev_data->psp_ret);
+	if (ret)
+		return ret;
+
+	ts->id = data->interface_id;
+	ts->meas_digest_valid = !!(data->p1_flags & SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_VALID);
+	ts->meas_digest_fresh = !!(data->p1_flags & SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_FRESH);
+	ts->no_fw_update = !!(data->p2_flags & SEV_TIO_TDI_INFO_P2_FLAG_NO_FW_UPDATE);
+	ts->cache_line_size = !!(data->p2_flags & SEV_TIO_TDI_INFO_P2_FLAG_CACHE_LINE_SIZE) ? 128 : 64;
+	ts->lock_msix = !!(data->p2_flags & SEV_TIO_TDI_INFO_P2_FLAG_LOCK_MSIX);
+	ts->bind_p2p = !!(data->p2_flags & SEV_TIO_TDI_INFO_P2_FLAG_BIND_P2P);
+	ts->all_request_redirect = !!(data->p2_flags & SEV_TIO_TDI_INFO_P2_FLAG_ALL_REQUEST_REDIRECT);
+
+#define __ALGO(x, n, y) \
+	((((x) & (0xFFULL << (n))) == TIO_SPDM_ALGOS_##y) ? \
+	 (1ULL << TSM_SPDM_ALGOS_##y) : 0)
+	ts->spdm_algos =
+		__ALGO(data->spdm_algos, 0, DHE_SECP256R1) |
+		__ALGO(data->spdm_algos, 0, DHE_SECP384R1) |
+		__ALGO(data->spdm_algos, 8, AEAD_AES_128_GCM) |
+		__ALGO(data->spdm_algos, 8, AEAD_AES_256_GCM) |
+		__ALGO(data->spdm_algos, 16, ASYM_TPM_ALG_RSASSA_3072) |
+		__ALGO(data->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P256) |
+		__ALGO(data->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P384) |
+		__ALGO(data->spdm_algos, 24, HASH_TPM_ALG_SHA_256) |
+		__ALGO(data->spdm_algos, 24, HASH_TPM_ALG_SHA_384) |
+		__ALGO(data->spdm_algos, 32, KEY_SCHED_SPDM_KEY_SCHEDULE);
+#undef __ALGO
+	memcpy(ts->certs_digest, data->certs_digest, sizeof(ts->certs_digest));
+	memcpy(ts->meas_digest, data->meas_digest, sizeof(ts->meas_digest));
+	memcpy(ts->interface_report_digest, data->interface_report_digest,
+	       sizeof(ts->interface_report_digest));
+	ts->intf_report_counter = data->intf_report_counter;
+	ts->valid = true;
+
+	return 0;
+}
+
 /**
  * struct sev_tio_tdi_status_data - TDI status data returned by TIO_TDI_STATUS
  *
@@ -1461,6 +1674,9 @@ int sev_tio_cmd_buffer_len(int cmd)
 	case SEV_CMD_TIO_DEV_RECLAIM:		return sizeof(struct sev_data_tio_dev_reclaim);
 	case SEV_CMD_TIO_DEV_CONNECT:		return sizeof(struct sev_data_tio_dev_connect);
 	case SEV_CMD_TIO_DEV_DISCONNECT:	return sizeof(struct sev_data_tio_dev_disconnect);
+	case SEV_CMD_TIO_DEV_STATUS:		return sizeof(struct sev_data_tio_dev_status);
+	case SEV_CMD_TIO_DEV_MEASUREMENTS:	return sizeof(struct sev_data_tio_dev_meas);
+	case SEV_CMD_TIO_DEV_CERTIFICATES:	return sizeof(struct sev_data_tio_dev_certs);
 	case SEV_CMD_TIO_TDI_CREATE:		return sizeof(struct sev_data_tio_tdi_create);
 	case SEV_CMD_TIO_TDI_RECLAIM:		return sizeof(struct sev_data_tio_tdi_reclaim);
 	case SEV_CMD_TIO_TDI_BIND:		return sizeof(struct sev_data_tio_tdi_bind);
@@ -1470,6 +1686,8 @@ int sev_tio_cmd_buffer_len(int cmd)
 	case SEV_CMD_TIO_GUEST_REQUEST:		return sizeof(struct sev_data_tio_guest_request);
 	case SEV_CMD_TIO_ASID_FENCE_CLEAR:	return sizeof(struct sev_data_tio_asid_fence_clear);
 	case SEV_CMD_TIO_ASID_FENCE_STATUS: return sizeof(struct sev_data_tio_asid_fence_status);
+	case SEV_CMD_TIO_TDI_INFO:		return sizeof(struct sev_data_tio_tdi_info);
+	case SEV_CMD_TIO_ROLL_KEY:		return sizeof(struct sev_data_tio_roll_key);
 	default:				return 0;
 	}
 }

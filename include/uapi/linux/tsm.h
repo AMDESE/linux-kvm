@@ -74,6 +74,31 @@ struct tdi_report_footer {
 #define TDI_REPORT_FTR(rep)		((struct tdi_report_footer *) &TDI_REPORT_MR((rep), \
 					TDI_REPORT_MR_NUM(rep)))
 
+struct tsm_dsm_status {
+	__u8 valid;
+	__u8 ctx_state;
+	__u8 tc_mask;
+	__u8 certs_slot;
+	__u8 no_fw_update;
+	__u8 reserved[3]; /* padding */
+	__u16 device_id;
+	__u16 segment_id;
+	__u16 ide_stream_id[8];
+} __packed;
+
+enum tsm_spdm_algos {
+	TSM_SPDM_ALGOS_DHE_SECP256R1,
+	TSM_SPDM_ALGOS_DHE_SECP384R1,
+	TSM_SPDM_ALGOS_AEAD_AES_128_GCM,
+	TSM_SPDM_ALGOS_AEAD_AES_256_GCM,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_RSASSA_3072,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P256,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P384,
+	TSM_SPDM_ALGOS_HASH_TPM_ALG_SHA_256,
+	TSM_SPDM_ALGOS_HASH_TPM_ALG_SHA_384,
+	TSM_SPDM_ALGOS_KEY_SCHED_SPDM_KEY_SCHEDULE,
+};
+
 enum tsm_tdisp_state {
 	TDISP_STATE_CONFIG_UNLOCKED,
 	TDISP_STATE_CONFIG_LOCKED,
