@@ -237,6 +237,10 @@ int iommufd_ioas_map_file(struct iommufd_ucmd *ucmd)
 				 cmd->start, cmd->length,
 				 conv_iommu_prot(cmd->flags), flags);
 	if (rc)
+		pr_err("___K___ %s %u: fd=%d -> file=%lx %llx +%llx => %llx: rc=%d\n",
+		       __func__, __LINE__,
+		       cmd->fd, (ulong) file, cmd->start, cmd->length, cmd->iova, rc);
+	if (rc)
 		goto out_put;
 
 	cmd->iova = iova;

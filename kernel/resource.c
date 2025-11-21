@@ -134,11 +134,11 @@ static int r_show(struct seq_file *m, void *v)
 		start = end = 0;
 	}
 
-	seq_printf(m, "%*s%0*llx-%0*llx : %s\n",
+	seq_printf(m, "%*s%0*llx-%0*llx : %s fl=%lx desc=%lx r=%lx\n",
 			depth * 2, "",
 			width, start,
 			width, end,
-			r->name ? r->name : "<BAD>");
+			r->name ? r->name : "<BAD>", r->flags, r->desc, (ulong)r);
 	return 0;
 }
 
@@ -368,6 +368,8 @@ static int find_next_iomem_res(resource_size_t start, resource_size_t end,
 	}
 
 	if (p) {
+//		pr_err("___K___ %s %u: %llx found r=%lx\n", __func__, __LINE__,	start, (ulong)p);
+
 		/* copy data */
 		*res = (struct resource) {
 			.start = max(start, p->start),

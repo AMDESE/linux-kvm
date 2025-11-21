@@ -2530,6 +2530,7 @@ static int snp_mmio_rmp_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	struct kvm_sev_snp_rmp_update params;
 	int ret;
+	kvm_pfn_t pfn0 = 0;
 
 	if (!sev_snp_guest(kvm))
 		return -ENOTTY;
@@ -2582,7 +2583,11 @@ static int snp_mmio_rmp_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 			ret = rmp_make_shared_mmio(pfn, PG_LEVEL_4K);
 		if (ret)
 			break;
+		if (!pfn0)
+			pfn0 = pfn;
 	}
+	pr_err("___K___ %s %u: pfn=%llx gpa=%llx +%llx flags=%x\n", __func__, __LINE__,
+	       pfn0, params.gpa, params.size, params.flags);
 
 unlock_exit:
 	mmap_read_unlock(kvm->mm);

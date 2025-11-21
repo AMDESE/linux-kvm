@@ -14,11 +14,22 @@
 
 #include "sev-guest.h"
 
+#include "../../../crypto/ccp/sev-dev-tio-dbg.h"
+
 #define TIO_MESSAGE_VERSION	1
+
+#define TIO_LOG_TIO	(1<<1)
+#define TIO_LOG_DOBJ	(1<<3)
+#define TIO_LOG_MMAP	(1<<4)
 
 ulong tsm_vtom = 0x7fffffff;
 module_param(tsm_vtom, ulong, 0644);
 MODULE_PARM_DESC(tsm_vtom, "SEV TIO vTOM value");
+
+uint gtiolog = 0xFF;
+module_param_named(tiolog, gtiolog, uint, 0660);
+MODULE_PARM_DESC(tiolog, "Log level bitmask: 1 TIOABI  3 DataObjects");
+
 
 #define tsm_dev_to_snp_dev(t)	((struct snp_guest_dev *)dev_get_drvdata((t)->dev.parent))
 #define pdev_to_tdi(p)		container_of((p)->tsm, struct tio_guest_tdi, ds.base_tsm)
@@ -51,10 +62,42 @@ enum mmio_config_status {
 	MMIO_CONFIG_COULD_NOT_CHANGE = 4,
 };
 
+static const char *mmio_fw_err_to_str(u64 fw_err)
+{
+	switch (fw_err & 0xFFFFFFFF) {
+#define __FWERR(x)	case MMIO_VALIDATE_##x: return #x
+	__FWERR(SUCCESS);
+	__FWERR(INVALID_TDI);
+	__FWERR(TDI_UNBOUND);
+	__FWERR(NOT_ASSIGNED);
+	__FWERR(NOT_UNIFORM);
+	__FWERR(NOT_IMMUTABLE);
+	__FWERR(NOT_MAPPED);
+	__FWERR(NOT_REPORTED);
+	__FWERR(OUT_OF_RANGE);
+#undef __FWERR
+	}
+	return "unknown";
+}
+
+static const char *sdte_fw_err_to_str(u64 fw_err)
+{
+	switch (fw_err & 0xFFFFFFFF) {
+#define __FWERR(x)	case SDTE_WRITE_##x: return #x
+	__FWERR(SUCCESS);
+	__FWERR(INVALID_TDI);
+	__FWERR(TDI_NOT_BOUND);
+	__FWERR(RESERVED);
+#undef __FWERR
+	}
+	return "unknown";
+}
+
 static int handle_tio_guest_request(struct snp_guest_dev *snp_dev, u8 type,
 				   void *req_buf, size_t req_sz, void *resp_buf, u32 resp_sz,
 				   void *pt, u64 *npages, u64 *bdfn, u64 *param, u64 *fw_err)
 {
+	char pfx[128] = "", *pfx1;
 	struct snp_msg_desc *mdesc = snp_dev->msg_desc;
 	struct snp_guest_req req = {
 		.msg_version = TIO_MESSAGE_VERSION,
@@ -82,9 +125,43 @@ static int handle_tio_guest_request(struct snp_guest_dev *snp_dev, u8 type,
 	if (param)
 		req.input.param = *param;
 
+	//sprintf(pfx, "#%d %s: ", smp_processor_id(), dbgpfx);
+	pfx1 = pfx + strlen(pfx);
+
+	if (gtiolog & TIO_LOG_TIO) {
+		// Header is not prepared yet so no printing
+		sprintf(pfx1, "*RQ< %s %x ", guest_req_to_str(type), type);
+		print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, req_buf, req_sz, false);
+	}
+
 	ret = snp_send_guest_request(mdesc, &req);
 
 	memcpy(resp_buf, req.resp_buf, resp_sz);
+
+	if (ret || exitinfo2 || (gtiolog & TIO_LOG_TIO)) {
+		// Dump the request here if the log was disabled and then error happened
+		if (ret || (gtiolog & TIO_LOG_TIO)) {
+			struct snp_guest_msg_hdr *rq = &mdesc->request->hdr;
+			sprintf(pfx1, "*RQh %s %x ", guest_req_to_str(rq->msg_type), rq->msg_type);
+			print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1,
+				       &mdesc->request->hdr, sizeof(mdesc->request->hdr), false);
+		}
+		if (ret && !(gtiolog & TIO_LOG_TIO)) {
+			struct snp_guest_msg_hdr *rq = &mdesc->request->hdr;
+			sprintf(pfx1, "*RQ< %s %x ", guest_req_to_str(rq->msg_type), rq->msg_type);
+			print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, req_buf, req_sz, false);
+		}
+		struct snp_guest_msg_hdr *rs = &mdesc->response->hdr;
+		sprintf(pfx1, "*RSh %s %x ", guest_req_to_str(rs->msg_type), rs->msg_type);
+		print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1,
+			       &mdesc->response->hdr, sizeof(mdesc->response->hdr), false);
+		sprintf(pfx1, "*RS> %s %x ", guest_req_to_str(rs->msg_type), rs->msg_type);
+		print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, resp_buf,
+			       mdesc->response->hdr.msg_sz, false);
+
+		pr_err("*RS %s %x => rc=%d fw=%lld\n", guest_req_to_str(rs->msg_type), rs->msg_type,
+		       ret, exitinfo2);
+	}
 
 	if (param)
 		*param = req.input.param;
@@ -151,6 +228,9 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 		return -ENOMEM;
 
 	memcpy(pt, nonce, SPDM_MEASUREMENTS_NONCE_LEN);
+	print_hex_dump(KERN_INFO, "MEAS NONCE ", DUMP_PREFIX_OFFSET, 16, 1,
+		       pt, SPDM_MEASUREMENTS_NONCE_LEN, false);
+
 	rc = handle_tio_guest_request(snp_dev, type, req_buf, req_sz, resp_buf, resp_sz,
 				      pt, &npages, &bdfn, state ? &param : NULL, fw_err);
 	if (npages > TIO_DATA_PAGES) {
@@ -384,6 +464,11 @@ static int mmio_validate_range(struct snp_guest_dev *snp_dev, struct pci_dev *pd
 		goto free_exit;
 
 	*status = rsp->status;
+	if (rsp->status) {
+		pr_err("___K___ %s %u: status=%#x \"%s\"\n", __func__, __LINE__,
+		       rsp->status, mmio_fw_err_to_str(rsp->status));
+		rc = -EBADR;
+	}
 
 free_exit:
 	/* The response buffer contains the sensitive data, explicitly clear it. */
@@ -558,8 +643,9 @@ static int tio_tdi_mmio_validate(struct pci_dev *pdev, struct snp_guest_dev *snp
 					 r->start, r->end - r->start + 1, false, &fw_err,
 					 &mmio_status);
 		if (rc || fw_err != SEV_RET_SUCCESS || mmio_status != MMIO_VALIDATE_SUCCESS) {
-			pci_err(pdev, "MMIO #%d %llx..%llx validation failed 0x%llx %d\n",
-				range_id, r->start, r->end, fw_err, mmio_status);
+			pci_err(pdev, "MMIO #%d %llx..%llx validation failed 0x%llx %s/%s\n",
+				range_id, r->start, r->end, fw_err,
+				mmio_fw_err_to_str(mmio_status), psp_ret_to_str(fw_err));
 			continue;
 		}
 
@@ -569,6 +655,14 @@ static int tio_tdi_mmio_validate(struct pci_dev *pdev, struct snp_guest_dev *snp
 		++mmio->nr;
 
 		pci_notice(pdev, "MMIO #%d %llx..%llx validated\n",  range_id, r->start, r->end);
+
+		if (gtiolog & TIO_LOG_MMAP) {
+			// iomap (un)encrypted resources to see the Cbit in dump_pt
+			void *pp = pci_iomap(pdev, range_id, PAGE_SIZE);
+			pci_err(pdev, "___K___ %s %u: bar#%d => %lx %lx\n",
+				__func__, __LINE__, range_id, (ulong) pp,
+				(ulong)pci_resource_n(pdev, range_id));
+		}
 	}
 
 	if (!rc) {
@@ -777,6 +871,7 @@ static int tio_tdi_sdte_write(struct pci_dev *pdev, struct snp_guest_dev *snp_de
 			       NULL, NULL, &bdfn, &flags, &fw_err);
 	if (rc) {
 		pci_err(pdev, "SDTE write failed with 0x%llx\n", fw_err);
+		pci_err(pdev, "%s\n", sdte_fw_err_to_str(fw_err));
 		goto free_exit;
 	}
 

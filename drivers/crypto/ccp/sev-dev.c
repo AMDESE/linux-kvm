@@ -1471,6 +1471,11 @@ static int __sev_snp_init_locked(int *error, unsigned int max_snp_asid)
 	 */
 	wbinvd_on_all_cpus();
 
+	dev_err(sev->dev, "SEV-SNP: %#x %s init_rmp=%d tio_en=%d ccp.tio_en=%d tio_supp=%d iommu_tio_supp=%d\n",
+		cmd, cmd == SEV_CMD_SNP_INIT_EX ? "SNP_INIT_EX" : "SNP_INIT",
+		data.init_rmp, data.tio_en, sev_tio_enabled,
+		!!(sev->snp_feat_info_0.ebx & SNP_SEV_TIO_SUPPORTED),
+		amd_iommu_sev_tio_supported());
 	rc = __sev_do_cmd_locked(cmd, arg, error);
 	if (rc) {
 		dev_err(sev->dev, "SEV-SNP: %s failed rc %d, error %#x\n",

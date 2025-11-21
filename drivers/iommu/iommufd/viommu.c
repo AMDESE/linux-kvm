@@ -531,6 +531,8 @@ int iommufd_vdevice_tsm_bind_ioctl(struct iommufd_ucmd *ucmd)
 		if (rc)
 			goto out_put_vdev;
 	}
+	dev_err(idev->dev, "___K___ %s %u: set kvm %d rc=%d\n",
+		__func__, __LINE__, cmd->kvmfd, rc);
 
 	rc = iommufd_ucmd_respond(ucmd, sizeof(*cmd));
 out_put_vdev:
@@ -578,6 +580,9 @@ int iommufd_vdevice_tsm_guest_request_ioctl(struct iommufd_ucmd *ucmd)
 			goto out_put_vdev;
 		}
 
+		dev_err(idev->dev, "___K___ %s %u: GR RUN group=%lx domain=%lx ops=%pS\n",
+			__func__, __LINE__, (ulong) idev->dev->iommu_group,
+			(ulong) domain, domain->ops->tsm_enable);
 		rc = domain->ops->tsm_enable(domain, idev->dev);
 		if (rc)
 			goto out_put_vdev;

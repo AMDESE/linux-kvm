@@ -1854,6 +1854,12 @@ static int __init init_iommu_one_late(struct amd_iommu *iommu)
 	 */
 	iommu->pci_seg->rlookup_table[iommu->devid] = NULL;
 
+	pr_err("#%d mmiobase=%lx mmio=%llx..%llx pciseg=%lx pci_seg->id=%hx dev=%s(%x) root=%s\n",
+	       iommu->index, (unsigned long) iommu->mmio_base, iommu->mmio_phys, iommu->mmio_phys_end,
+	       (unsigned long) iommu->pci_seg, iommu->pci_seg ? iommu->pci_seg->id : 0xbaad,
+	       (iommu && iommu->dev) ? pci_name(iommu->dev) : "NULL", iommu->devid,
+	       (iommu && iommu->root_pdev) ? pci_name(iommu->root_pdev) : "NULL");
+
 	return 0;
 }
 

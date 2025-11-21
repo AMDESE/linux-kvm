@@ -11,6 +11,7 @@
 #include <linux/bitfield.h>
 #include <linux/module.h>
 
+#include <linux/smp.h>
 #include <asm/sev-common.h>
 #include <asm/sev.h>
 #include <asm/sev-kvm.h>
@@ -18,6 +19,7 @@
 #include "psp-dev.h"
 #include "sev-dev.h"
 #include "sev-dev-tio.h"
+#include "sev-dev-tio-dbg.h"
 
 MODULE_IMPORT_NS("PCI_IDE");
 
@@ -37,6 +39,46 @@ MODULE_PARM_DESC(ide_ro, "If true, skips on configuring PF#0 IDE stream, use set
 #define tsm_dev_to_sev(tsmdev)	dev_to_sev((tsmdev)->dev.parent)
 
 #define pdev_to_tio_dsm(pdev)	(container_of((pdev)->tsm, struct tio_dsm, tsm.base_tsm))
+
+static int __sel_ide_offset(int ide_cap, int nr_link_ide, int stream_index, int nr_ide_mem)
+{
+	int offset = ide_cap + PCI_IDE_LINK_STREAM_0 + nr_link_ide * PCI_IDE_LINK_BLOCK_SIZE;
+	/* Assume a constant number of address association resources per stream index */
+	return offset + stream_index * PCI_IDE_SEL_BLOCK_SIZE(nr_ide_mem);
+}
+
+static int stream_state(struct pci_dev *pdev, struct pci_ide *ide, u32 *status)
+{
+	struct pci_ide_partner *settings = pci_ide_to_settings(pdev, ide);
+	int pos = __sel_ide_offset(pdev->ide_cap, pdev->nr_link_ide,
+				settings->stream_index, pdev->nr_ide_mem);
+
+	return pci_read_config_dword(pdev, pos + PCI_IDE_SEL_STS, status);
+}
+
+static void pr_ide_state(struct pci_ide *ide)
+{
+	struct pci_dev *pdev = ide->pdev->tsm->dsm_dev;
+	struct pci_dev *rp = pcie_find_root_port(pdev);
+	u32 devst = 0xffffffff, rcst = 0xffffffff;
+	int ret = stream_state(pdev, ide, &devst);
+	int re1 = stream_state(rp, ide, &rcst);
+
+	pci_notice(pdev, "%x%s <-> %s: %x%s ret=%d/%d",
+		   devst,
+		   (PCI_IDE_SEL_STS_STATE & devst) == 2 ? "=SECURE" : "",
+		   pci_name(rp),
+		   rcst,
+		   (PCI_IDE_SEL_STS_STATE & rcst) == 2 ? "=SECURE" : "",
+		   ret, re1);
+}
+
+static void pr_ide_states(struct pci_ide **ide)
+{
+	for (int i = 0; i < TIO_IDE_MAX_TC; ++i)
+		if (ide[i])
+			pr_ide_state(ide[i]);
+}
 
 static int sev_tio_spdm_cmd(struct tio_dsm *dsm, int ret)
 {
@@ -200,6 +242,7 @@ static void streams_teardown(struct pci_ide **ide)
 	for (int i = 0; i < TIO_IDE_MAX_TC; ++i) {
 		if (ide[i]) {
 			stream_teardown(ide[i]);
+			pr_ide_state(ide[i]);
 			pci_ide_stream_free(ide[i]);
 			ide[i] = NULL;
 		}
@@ -230,6 +273,7 @@ static int stream_alloc(struct pci_dev *pdev, struct pci_ide **ide,
 	ide1->stream_id = tc;
 
 	ide[tc] = ide1;
+	pr_ide_state(ide1);
 
 	return 0;
 }
@@ -389,6 +433,26 @@ static int dsm_connect(struct pci_dev *pdev)
 
 	dev_data->connected = true;
 
+	pr_ide_states(dev_data->ide);
+
+	/* Verify that DEV_CERTIFICATES actually works */
+	ret = sev_tio_dev_certificates(dev_data);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (!ret) {
+		struct tsm_blob *certs = NULL;
+
+		tio_save_output(&certs, dev_data->output, SPDM_DOBJ_ID_CERTIFICATE, NULL);
+		if (!certs || !dsm->tsm.base_tsm.certs ||
+		    !certs->len || !dsm->tsm.base_tsm.certs->len ||
+		    memcmp(certs->data, dsm->tsm.base_tsm.certs->data, certs->len))
+			pci_err(pdev, "certs do not match: %lx [%llx] %lx [%llx]\n",
+				(ulong) certs, *(u64 *) certs->data,
+				(ulong) dsm->tsm.base_tsm.certs,
+				*(u64 *) dsm->tsm.base_tsm.certs->data);
+
+		tsm_blob_free(certs);
+	}
+
 	return 0;
 
 free_exit:
@@ -540,6 +604,8 @@ static void tdi_unbind(struct pci_tdi *tdi)
 	}
 
 	kfree(ttdi);
+
+	pr_ide_states(dev_data->ide);
 }
 
 static struct pci_tdi *tdi_bind(struct pci_dev *pdev, struct kvm *kvm, u32 tdi_id)
@@ -585,6 +651,8 @@ static struct pci_tdi *tdi_bind(struct pci_dev *pdev, struct kvm *kvm, u32 tdi_i
 	ret = sev_tio_tdi_status_fin(dev_data, tdi_data, &state);
 	if (ret)
 		goto error_exit;
+
+	pr_ide_states(dev_data->ide);
 
 	return &(ttdi->tdi);
 
@@ -674,6 +742,19 @@ static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
 	ret = sev_tio_guest_request(dev_data, tdi_data, dev_data->guest_req_buf,
 				    dev_data->guest_resp_buf);
 	ret = sev_tio_spdm_cmd(dsm, ret);
+
+	if (ret == -EIO && dev_data->psp_ret == SEV_RET_INVALID_GUEST_STATE) {
+		pr_err("%s %u: !!! Working around PSP bug\n", __func__, __LINE__);
+
+		ret = tdi_run(dsm, ttdi);
+		if (ret)
+			return ret;
+
+		ret = sev_tio_guest_request(dev_data, tdi_data, dev_data->guest_req_buf,
+					    dev_data->guest_resp_buf);
+		ret = sev_tio_spdm_cmd(dsm, ret);
+	}
+
 	*fw_err = dev_data->psp_ret;
 	if (ret)
 		return ret;
@@ -682,6 +763,7 @@ static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
 	if (ret)
 		return ret;
 
+	pr_ide_states(dev_data->ide);
 	return resplen;
 }
 
@@ -771,6 +853,9 @@ error_exit:
 	kfree(t);
 	pr_err("Failed to enable SEV-TIO: ret=%d en=%d initdone=%d SEV=%d\n",
 	       ret, t->tio_en, t->tio_init_done, boot_cpu_has(X86_FEATURE_SEV));
+	pr_err("Check BIOS for: SMEE, SEV Control, SEV-ES ASID Space Limit=99,\n"
+	       "SNP Memory (RMP Table) Coverage, RMP Coverage for 64Bit MMIO Ranges\n"
+	       "SEV-SNP Support, SEV-TIO Support, PCIE IDE Capability\n");
 }
 
 void sev_tsm_uninit(struct sev_device *sev)

@@ -2427,6 +2427,20 @@ static struct iommu_device *amd_iommu_probe_device(struct device *dev)
 	 * supported PASIDs, else it will be zero.
 	 */
 	dev_data = dev_iommu_priv_get(dev);
+#if 0
+// To Debug Logs
+	dev_err(dev, "___K___ %s %u: la57=%d gpt=%d GIOSUP=%d GT=%d PPR=%d EPHSUP=%d "
+		"snpen=%d pasidsup=%d fl=%x\n", __func__, __LINE__,
+		cpu_feature_enabled(X86_FEATURE_LA57),
+		amd_iommu_gpt_level,
+		check_feature(FEATURE_GIOSUP),
+		check_feature(FEATURE_GT),
+		check_feature(FEATURE_PPR),
+		check_feature(FEATURE_EPHSUP),
+		amd_iommu_snp_en,
+		dev_data->flags & AMD_IOMMU_DEVICE_FLAG_PASID_SUP,
+		dev_data->flags);
+#endif
 	if (amd_iommu_pasid_supported() && dev_is_pci(dev) &&
 	    pdev_pasid_supported(dev_data)) {
 		dev_data->max_pasids = min_t(u32, iommu->iommu.max_pasids,
@@ -2656,6 +2670,8 @@ static int blocked_domain_attach_device(struct iommu_domain *domain,
 	struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
 
 	dev_data->tsm_enabled = false;
+	dev_err(dev, "___K___ %s %u: tsm_enabled=%d devdata=%lx\n",
+		__func__, __LINE__, dev_data->tsm_enabled, (ulong) dev_data);
 	if (dev_data->domain)
 		detach_device(dev);
 
@@ -3067,7 +3083,8 @@ static int amd_iommu_tsm_enable(struct iommu_domain *dom, struct device *dev)
 	/* Always set DTE, either to match sDTE or ignore, but never clear */
 	dev_update_dte(dev_data, true);
 
-	pr_err("___K___ %s %u: %llx\n", __func__, __LINE__, (u64)dev_data);
+	dev_err(dev, "___K___ %s %u: tsm_enabled=%d devdata=%lx\n",
+		__func__, __LINE__, dev_data->tsm_enabled, (ulong) dev_data);
 
 	return 0;
 }

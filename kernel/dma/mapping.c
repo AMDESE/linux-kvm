@@ -647,6 +647,9 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 	trace_dma_alloc(dev, cpu_addr, *dma_handle, size, DMA_BIDIRECTIONAL,
 			flag, attrs);
 	debug_dma_alloc_coherent(dev, size, *dma_handle, cpu_addr, attrs);
+	if (!strcmp(dev_name(dev), "0000:01:00.0"))
+		dev_err(dev, "___K___ %s %u: cpu %#lx => dma %#lx\n", __func__, __LINE__,
+			(ulong) cpu_addr, (ulong) *dma_handle);
 	return cpu_addr;
 }
 EXPORT_SYMBOL(dma_alloc_attrs);

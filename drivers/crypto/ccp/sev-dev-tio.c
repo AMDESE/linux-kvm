@@ -8,17 +8,44 @@
 #include <linux/vmalloc.h>
 #include <linux/bitfield.h>
 #include <linux/pci-doe.h>
+#include <linux/smp.h>
 #include <uapi/linux/tsm.h>
 #include <asm/sev-common.h>
 #include <asm/sev.h>
 #include <asm/page.h>
 #include "sev-dev.h"
 #include "sev-dev-tio.h"
+#include "sev-dev-tio-dbg.h"
+
+#define TIO_LOG_SPDM	(1<<0)
+#define TIO_LOG_TIO	(1<<1)
+#define TIO_LOG_DOBJ	(1<<3)
+#define TIO_LOG_MEM	(1<<4)
+#define TIO_LOG_GUEST	(1<<5)
+
+static uint tiolog = TIO_LOG_SPDM | TIO_LOG_TIO | TIO_LOG_DOBJ | TIO_LOG_MEM | TIO_LOG_GUEST;
+module_param_named(tiolog, tiolog, uint, 0660);
+MODULE_PARM_DESC(tiolog, "Log level bitmask: 0 SPDM  1 TIOABI  3 DataObjects  4 STP  5 Guesti  6 WA");
 
 #define to_tio_status(dev_data)	\
 		(container_of((dev_data), struct tio_dsm, data)->sev->tio_status)
 
-#define DATA_PG(type, tdev) ((type *) ((tdev)->data_pg))
+static void *__prep_data_pg(struct tsm_dsm_tio *dev_data, size_t len)
+{
+	void *r = dev_data->data_pg;
+
+	if (snp_reclaim_pages(virt_to_phys(r), 1, false))
+		return NULL;
+
+	memset(r, 0, len);
+
+	if (rmp_make_private(page_to_pfn(virt_to_page(r)), 0, PG_LEVEL_4K, 0, true))
+		return NULL;
+
+	return r;
+}
+
+#define DATA_PG(type, tdev) ((type *) __prep_data_pg((tdev), sizeof(type)))
 
 #define SLA_PAGE_TYPE_DATA	0
 #define SLA_PAGE_TYPE_SCATTER	1
@@ -36,6 +63,7 @@ static phys_addr_t sla_to_pa(struct sla_addr_t sla)
 	u64 pfn = sla.pfn;
 	u64 pa = pfn << PAGE_SHIFT;
 
+//	pr_err("___K___ %s %u: %llx => %llx, %llx\n", __func__, __LINE__, sla.sla, pa, sla.sla - pa);
 	return pa;
 }
 
@@ -58,6 +86,7 @@ static struct sla_addr_t make_sla(struct page *pg, bool stp)
 		.page_type = stp ? SLA_PAGE_TYPE_SCATTER : SLA_PAGE_TYPE_DATA
 	};
 
+//	pr_err("___K___ %s %u: %llx\n", __func__, __LINE__, ret.sla);
 	return ret;
 }
 
@@ -169,7 +198,8 @@ static struct spdm_dobj_hdr *sla_to_dobj_hdr_check(struct sla_buffer_hdr *buf, u
 		return NULL;
 
 	if (hdr->id != check_dobjid) {
-		pr_err("! ERROR: expected %d, found %d\n", check_dobjid, hdr->id);
+		pr_err("! ERROR: expected \"%s\" %d, found \"%s\" %d\n",
+		       dobj_str(check_dobjid), check_dobjid, dobj_str(hdr->id), hdr->id);
 		return NULL;
 	}
 
@@ -226,7 +256,34 @@ static void *sla_to_data(struct sla_buffer_hdr *buf, u32 dobjid)
 	return (u8 *) hdr + sla_dobj_id_to_size(dobjid);
 }
 
-/*
+static void dobj_dump(struct sla_buffer_hdr *buf)
+{
+	struct spdm_dobj_hdr *hdr;
+	char pfx[64] = "";
+	size_t n, sz;
+
+	if (WARN_ON(!buf))
+		return;
+
+	if (!(tiolog & TIO_LOG_DOBJ))
+		return;
+
+	hdr = sla_to_dobj_hdr(buf);
+	if (WARN_ON(!hdr))
+		return;
+
+	sz = sizeof(*buf) + buf->payload_sz;
+	if (buf->payload_sz != sla_dobj_id_to_size(hdr->id) + hdr->length)
+		pr_err("!!! Mismatch in plsz=%d and hdrlen=%d\n",
+			buf->payload_sz, hdr->length);
+	n = min(sz, 256);
+
+	snprintf(pfx, sizeof(pfx)-1, "DO=%s %d%s ",
+		 dobj_str(hdr->id), hdr->id, (n == sz) ? "" : "~");
+	print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16, 1, buf, n, false);
+}
+
+/**
  * struct sev_data_tio_status - SEV_CMD_TIO_STATUS command
  *
  * @length: Length of this command buffer in bytes
@@ -631,9 +688,11 @@ struct sev_data_tio_roll_key {
 	struct sla_addr_t dev_ctx_sla;			/* In */
 } __packed;
 
-static struct sla_buffer_hdr *sla_buffer_map(struct sla_addr_t sla)
+#define sla_buffer_map(sla)	__sla_buffer_map((sla), __func__, __LINE__)
+static struct sla_buffer_hdr *__sla_buffer_map(struct sla_addr_t sla, const char *fff, int nnn)
 {
 	struct sla_buffer_hdr *buf;
+	char tmp[256] = "";
 
 	BUILD_BUG_ON(sizeof(struct sla_buffer_hdr) != 0x40);
 	if (IS_SLA_NULL(sla))
@@ -663,8 +722,11 @@ static struct sla_buffer_hdr *sla_buffer_map(struct sla_addr_t sla)
 		if (!pp)
 			return NULL;
 
-		for (i = 0; i < npages; ++i)
+		sprintf(tmp, "%d pages, %llx:", npages, sla.sla);
+		for (i = 0; i < npages; ++i) {
+			snprintf(tmp + strlen(tmp), sizeof(tmp) - strlen(tmp) - 1, " %llx", scatter[i].sla);
 			pp[i] = sla_to_page(scatter[i]);
+		}
 
 		buf = vm_map_ram(pp, npages, 0);
 		kfree(pp);
@@ -672,21 +734,30 @@ static struct sla_buffer_hdr *sla_buffer_map(struct sla_addr_t sla)
 		struct page *pg = sla_to_page(sla);
 
 		buf = vm_map_ram(&pg, 1, 0);
+		sprintf(tmp, "1 page = %llx", sla.sla);
 	}
+	if (tiolog & TIO_LOG_MEM)
+		pr_info("sla vmap: %lx <- %s\n", (unsigned long) buf, tmp);
 
 	return buf;
 }
 
 static void sla_buffer_unmap(struct sla_addr_t sla, struct sla_buffer_hdr *buf)
 {
-	if (!buf)
+	char tmp[256] = "";
+
+	if (!buf) {
+		pr_err_once("___K___ %s %u\n", __func__, __LINE__);
 		return;
+	}
 
 	if (sla.page_type == SLA_PAGE_TYPE_SCATTER) {
 		struct sla_addr_t *scatter = sla_to_va(sla);
 		unsigned int i, npages = 0;
 
+		sprintf(tmp, "%d page(s), %llx:", npages, sla.sla);
 		for (i = 0; i < SLA_SCATTER_LEN(sla); ++i) {
+			snprintf(tmp + strlen(tmp), sizeof(tmp) - strlen(tmp) - 1, " %llx", scatter[i].sla);
 			if (IS_SLA_EOL(scatter[i])) {
 				npages = i;
 				break;
@@ -698,7 +769,10 @@ static void sla_buffer_unmap(struct sla_addr_t sla, struct sla_buffer_hdr *buf)
 		vm_unmap_ram(buf, npages);
 	} else {
 		vm_unmap_ram(buf, 1);
+		sprintf(tmp, "1 page = %llx", sla.sla);
 	}
+	if (tiolog & TIO_LOG_MEM)
+		pr_info("sla vunmap: %lx %s\n", (unsigned long) buf, tmp);
 }
 
 static void dobj_response_init(struct sla_buffer_hdr *buf)
@@ -710,6 +784,8 @@ static void dobj_response_init(struct sla_buffer_hdr *buf)
 	dobj->version.minor = 0;
 	dobj->length = 0;
 	buf->payload_sz = sla_dobj_id_to_size(dobj->id) + dobj->length;
+
+	dobj_dump(buf);
 }
 
 static void sla_free(struct sla_addr_t sla, size_t len, bool firmware_state)
@@ -717,6 +793,7 @@ static void sla_free(struct sla_addr_t sla, size_t len, bool firmware_state)
 	unsigned int npages = PAGE_ALIGN(len) >> PAGE_SHIFT;
 	struct sla_addr_t *scatter = NULL;
 	int ret = 0, i;
+	char tmp[256];
 
 	if (IS_SLA_NULL(sla))
 		return;
@@ -725,15 +802,21 @@ static void sla_free(struct sla_addr_t sla, size_t len, bool firmware_state)
 		if (sla.page_type == SLA_PAGE_TYPE_SCATTER) {
 			scatter = sla_to_va(sla);
 
+			tmp[0] = 0;
 			for (i = 0; i < npages; ++i) {
 				if (IS_SLA_EOL(scatter[i]))
 					break;
+
+				snprintf(tmp + strlen(tmp), sizeof(tmp) - strlen(tmp), " %llx",
+					 scatter[i].sla);
 
 				ret = snp_reclaim_pages(sla_to_pa(scatter[i]), 1, false);
 				if (ret)
 					break;
 			}
+			pr_notice("Reclaimed (ret %d) private %d: %s\n", ret, npages, tmp);
 		} else {
+			pr_err("Reclaiming %llx\n", sla.sla);
 			ret = snp_reclaim_pages(sla_to_pa(sla), 1, false);
 		}
 	}
@@ -742,6 +825,7 @@ static void sla_free(struct sla_addr_t sla, size_t len, bool firmware_state)
 		return;
 
 	if (scatter) {
+		pr_notice("Freeing %d data pages\n", npages);
 		for (i = 0; i < npages; ++i) {
 			if (IS_SLA_EOL(scatter[i]))
 				break;
@@ -749,15 +833,18 @@ static void sla_free(struct sla_addr_t sla, size_t len, bool firmware_state)
 		}
 	}
 
+	pr_notice("Freeing 1 data page\n");
 	free_page((unsigned long)sla_to_va(sla));
 }
 
-static struct sla_addr_t sla_alloc(size_t len, bool firmware_state)
+#define sla_alloc(l, fs) __sla_alloc_dobj((l), (fs), __func__, __LINE__)
+static struct sla_addr_t __sla_alloc_dobj(size_t len, bool firmware_state, const char *fff, int nnn)
 {
 	unsigned long i, npages = PAGE_ALIGN(len) >> PAGE_SHIFT;
 	struct sla_addr_t *scatter = NULL;
 	struct sla_addr_t ret = SLA_NULL;
 	struct sla_buffer_hdr *buf;
+	char tmp[256] = "";
 	struct page *pg;
 
 	if (npages == 0)
@@ -800,17 +887,30 @@ static struct sla_addr_t sla_alloc(size_t len, bool firmware_state)
 
 	if (firmware_state) {
 		if (scatter) {
+			tmp[0] = 0;
 			for (i = 0; i < npages; ++i) {
-				if (rmp_make_private(sla_to_pfn(scatter[i]), 0,
-						     PG_LEVEL_4K, 0, true))
+				if (rmp_make_private(sla_to_pfn(scatter[i]), 0, PG_LEVEL_4K, 0, true))
 					goto free_exit;
+
+				snprintf(tmp + strlen(tmp), sizeof(tmp) - strlen(tmp), " %llx",
+					 scatter[i].sla);
 			}
+			pr_notice("_K_ %s %u: private %ld page(s)\n_K_ %s\n", fff, nnn, npages, tmp);
 		} else {
 			if (rmp_make_private(sla_to_pfn(ret), 0, PG_LEVEL_4K, 0, true))
 				goto no_reclaim_exit;
+			pr_notice("_K_ %s %u: %llx -> private\n", fff, nnn, ret.sla);
 		}
 	}
 
+	pr_notice("%s %u: sla_alloc(len=%lx npages=%lx) => PFN#%lx/%s/%s %s\n", fff, nnn,
+		  (unsigned long) len, (unsigned long) npages,
+		  (unsigned long) ret.pfn, ret.page_type ? "STP":"data", ret.page_size ? "2M" : "4K",
+		  firmware_state ? "FW":"HV");
+
+	if (scatter)
+		print_hex_dump(KERN_INFO, "SLA ", DUMP_PREFIX_OFFSET, 16, 8,
+			       scatter, sizeof(struct sla_addr_t) * (npages + 1), false);
 	return ret;
 
 no_reclaim_exit:
@@ -889,20 +989,83 @@ bool tio_save_output(struct tsm_blob **blob, struct sla_addr_t sla,
 //		kfree(buf1);
 //	}
 
+	dobj_dump(buf);
+
 	sla_buffer_unmap(sla, buf);
 
 	return *blob != NULL;
+}
+
+struct spdm_msg_hdr  {
+	u8 ver;
+	u8 request_response_code;
+	u8 param1;
+	u8 param2;
+} __packed;
+
+struct secured_session_hdr
+{
+	u32 session_id;
+	//u16 sequence_num;
+	u16 msg_len;
+} __packed;
+
+static inline char *pr_spdm(char *buf, size_t len, struct spdm_msg_hdr *sh, u8 secure)
+{
+	if (secure == DOBJ_DATA_TYPE_SECURE_SPDM) {
+		struct secured_session_hdr *sec = (struct secured_session_hdr *) sh;
+		snprintf(buf, len, " [SecSPDM id=%x len=%hd]", sec->session_id, sec->msg_len);
+		return buf;
+	}
+	snprintf(buf, len, "[SPDM v%x %x=\"%s\" %02x %02x]",
+		 sh->ver, sh->request_response_code, spdm_to_str(sh->request_response_code),
+		 sh->param1, sh->param2);
+	return buf;
 }
 
 static int sev_tio_do_cmd(int cmd, void *data, size_t data_len, int *psp_ret,
 			  struct tsm_dsm_tio *dev_data)
 {
 	int rc;
+	char pfx[128];
+	char buf[256];
+
+	sprintf(pfx, "#%d %s(%x) ", smp_processor_id(), tio_cmd_to_str(cmd), cmd);
+	if (cmd == SEV_CMD_TIO_GUEST_REQUEST) {
+		struct sev_data_tio_guest_request *gr = data_len ? data : dev_data->cmd_data;
+		struct snp_guest_msg_hdr *rq = phys_to_virt(__sme_clr(gr->req_paddr));
+
+		sprintf(pfx + strlen(pfx), "%s(%x) ",
+			guest_req_to_str(rq->msg_type), rq->msg_type);
+	}
+
+	// We are continuing
+	if (data_len == 0) {
+		if (WARN_ON_ONCE(!dev_data))
+			return -EFAULT;
+
+		struct spdm_dobj_hdr_resp *resp_hdr = sla_to_dobj_resp_hdr(dev_data->respbuf);
+		struct tsm_spdm *spdm = &dev_data->spdm;
+
+		pr_notice(" - %s Resp %s, len=%ld\n",
+			pfx,
+			pr_spdm(buf, sizeof(buf) - 1, spdm->rsp, resp_hdr->data_type),
+			spdm->rsp_len);
+		if (tiolog & TIO_LOG_SPDM)
+			print_hex_dump(KERN_INFO, "SPDM> ", DUMP_PREFIX_OFFSET, 16, 1,
+				       spdm->rsp, min(spdm->rsp_len, 64), false);
+	} else {
+		// Dump only the first one
+		pr_notice("%s cmdlen=%ld\n", pfx, data_len);
+		if (tiolog & TIO_LOG_TIO)
+			print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16,
+				       1, data, *(u32 *) data, false);
+	}
 
 	*psp_ret = 0;
 	rc = sev_do_cmd(cmd, data, psp_ret);
 
-	if (WARN_ON(!rc && *psp_ret == SEV_RET_SPDM_REQUEST))
+	if (WARN_ON(!dev_data && !rc && *psp_ret == SEV_RET_SPDM_REQUEST))
 		return -EIO;
 
 	if (rc == 0 && *psp_ret == SEV_RET_EXPAND_BUFFER_LENGTH_REQUEST) {
@@ -924,7 +1087,7 @@ static int sev_tio_do_cmd(int cmd, void *data, size_t data_len, int *psp_ret,
 		rc = sev_do_cmd(cmd, data, psp_ret);
 	}
 
-	if ((rc == 0 || rc == -EIO) && *psp_ret == SEV_RET_SPDM_REQUEST) {
+	if (dev_data && (rc == 0 || rc == -EIO) && *psp_ret == SEV_RET_SPDM_REQUEST) {
 		struct spdm_dobj_hdr_resp *resp_hdr;
 		struct spdm_dobj_hdr_req *req_hdr;
 		struct sev_tio_status *tio_status = to_tio_status(dev_data);
@@ -958,14 +1121,29 @@ static int sev_tio_do_cmd(int cmd, void *data, size_t data_len, int *psp_ret,
 		dev_data->spdm.req_len = req_hdr->hdr.length -
 			sla_dobj_id_to_size(SPDM_DOBJ_ID_REQ);
 		dev_data->spdm.rsp_len = resp_len;
+		if (tiolog & TIO_LOG_SPDM)
+			print_hex_dump(KERN_INFO, "SPDM< ", DUMP_PREFIX_OFFSET, 16, 1,
+				       dev_data->spdm.req,
+				       min(dev_data->spdm.req_len, 64), false);
 	} else if (dev_data && dev_data->cmd) {
 		/* For either error or success just stop the bouncing */
 		memset(dev_data->cmd_data, 0, sizeof(dev_data->cmd_data));
 		dev_data->cmd = 0;
 	}
 
+	pr_notice(" . %s rc=%d psp=0x%x %s %s\n",
+		  pfx, rc, *psp_ret, psp_ret_to_str(*psp_ret),
+		  (*psp_ret == SEV_RET_SPDM_REQUEST) ? "...spdm..." :
+		  ((*psp_ret != SEV_RET_SUCCESS) ? "---ERR---" : "done!"));
+
+	if (*psp_ret != SEV_RET_SUCCESS && *psp_ret != SEV_RET_SPDM_REQUEST && !(tiolog & TIO_LOG_TIO))
+		print_hex_dump(KERN_INFO, pfx, DUMP_PREFIX_OFFSET, 16,
+			       1, data, *(u32 *) data, false);
+
 	return rc;
 }
+
+#define sev_do_cmd(c, d, p) sev_tio_do_cmd((c), (d), sizeof(*(d)), (p), NULL)
 
 int sev_tio_continue(struct tsm_dsm_tio *dev_data)
 {
@@ -997,6 +1175,8 @@ static void spdm_ctrl_init(struct spdm_ctrl *ctrl, struct tsm_dsm_tio *dev_data)
 	ctrl->resp = dev_data->resp;
 	ctrl->scratch = dev_data->scratch;
 	ctrl->output = dev_data->output;
+	if (tiolog & TIO_LOG_SPDM)
+		print_hex_dump(KERN_INFO, "SPDMCTRL ", DUMP_PREFIX_OFFSET, 16, 8, ctrl, sizeof(*ctrl), false);
 }
 
 static void spdm_ctrl_free(struct tsm_dsm_tio *dev_data)
@@ -1077,6 +1257,9 @@ int sev_tio_init_locked(void *tio_status_page)
 	ret = __sev_do_cmd_locked(SEV_CMD_TIO_STATUS, &data_status, &psp_ret);
 	if (ret)
 		return ret;
+
+	print_hex_dump(KERN_INFO, "TIO_ST ", DUMP_PREFIX_OFFSET, 16, 1, tio_status,
+		       min(512, tio_status->length), false);
 
 	if (tio_status->length < offsetofend(struct sev_tio_status, tdictx_size) ||
 	    tio_status->reserved)
@@ -1559,6 +1742,8 @@ int sev_tio_tdi_info(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
 	if (ret)
 		return ret;
 
+	print_hex_dump(KERN_INFO, "TDIINFO ", DUMP_PREFIX_OFFSET, 16, 1, data, data->length, false);
+
 	ts->id = data->interface_id;
 	ts->meas_digest_valid = !!(data->p1_flags & SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_VALID);
 	ts->meas_digest_fresh = !!(data->p1_flags & SEV_TIO_TDI_INFO_P1_FLAG_MEAS_DIGEST_FRESH);
@@ -1653,8 +1838,10 @@ int sev_tio_tdi_status_fin(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi
 {
 	struct sev_tio_tdi_status_data *data = dev_data->data_pg;
 
+	print_hex_dump(KERN_INFO, "TDISTATUS ", DUMP_PREFIX_OFFSET, 16, 1, data, data->length, false);
+
 	switch (data->tdisp_state) {
-#define __TDISP_STATE(y) case TIO_TDISP_STATE_##y: *state = TDISP_STATE_##y; break
+#define __TDISP_STATE(y) case TIO_TDISP_STATE_##y: *state = TDISP_STATE_##y; pr_info(#y "\n"); break
 	__TDISP_STATE(CONFIG_UNLOCKED);
 	__TDISP_STATE(CONFIG_LOCKED);
 	__TDISP_STATE(RUN);
