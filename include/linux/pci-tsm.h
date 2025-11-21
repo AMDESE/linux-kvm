@@ -10,6 +10,18 @@ struct tsm_dev;
 struct kvm;
 enum pci_tsm_req_scope;
 
+/* Data object for measurements/certificates/attestationreport */
+struct tsm_blob {
+	void *data;
+	size_t len;
+};
+
+struct tsm_blob *tsm_blob_new(void *data, size_t len);
+static inline void tsm_blob_free(struct tsm_blob *b)
+{
+	kfree(b);
+}
+
 /*
  * struct pci_tsm_ops - manage confidential links and security state
  * @link_ops: Coordinate PCIe SPDM and IDE establishment via a platform TSM.
@@ -123,6 +135,7 @@ struct pci_tsm {
 	struct pci_dev *dsm_dev;
 	struct tsm_dev *tsm_dev;
 	struct pci_tdi *tdi;
+	struct tsm_blob *report;
 };
 
 /**
@@ -271,4 +284,75 @@ static inline ssize_t pci_tsm_guest_req(struct pci_dev *pdev,
 	return -ENXIO;
 }
 #endif
+
+/*
+ * struct tdisp_interface_id - TDISP INTERFACE_ID Definition
+ *
+ * @function_id: Identifies the function of the device hosting the TDI
+ *   15:0: @rid: Requester ID
+ *   23:16: @rseg: Requester Segment (Reserved if Requester Segment Valid is Clear)
+ *   24: @rseg_valid: Requester Segment Valid
+ *   31:25 – Reserved
+ * 8B - Reserved
+ */
+#define TSM_TDISP_IID_REQUESTER_ID	GENMASK(15, 0)
+#define TSM_TDISP_IID_RSEG		GENMASK(23, 16)
+#define TSM_TDISP_IID_RSEG_VALID	BIT(24)
+
+struct tdisp_interface_id {
+	__u32 function_id; /* TSM_TDISP_IID_xxxx */
+	__u8 reserved[8];
+} __packed;
+
+#define SPDM_MEASUREMENTS_NONCE_LEN	32
+typedef __u8 spdm_measurements_nonce_t[SPDM_MEASUREMENTS_NONCE_LEN];
+
+/*
+ * TDI Report Structure as defined in TDISP.
+ */
+#define _BITSH(x)	(1 << (x))
+#define TSM_TDI_REPORT_NO_FW_UPDATE	_BITSH(0)  /* not updates in CONFIG_LOCKED or RUN */
+#define TSM_TDI_REPORT_DMA_NO_PASID	_BITSH(1)  /* TDI generates DMA requests without PASID */
+#define TSM_TDI_REPORT_DMA_PASID	_BITSH(2)  /* TDI generates DMA requests with PASID */
+#define TSM_TDI_REPORT_ATS		_BITSH(3)  /* ATS supported and enabled for the TDI */
+#define TSM_TDI_REPORT_PRS		_BITSH(4)  /* PRS supported and enabled for the TDI */
+
+struct tdi_report_header {
+	__u16 interface_info; /* TSM_TDI_REPORT_xxx */
+	__u16 reserved2;
+	__u16 msi_x_message_control;
+	__u16 lnr_control;
+	__u32 tph_control;
+	__u32 mmio_range_count;
+} __packed;
+
+/*
+ * Each MMIO Range of the TDI is reported with the MMIO reporting offset added.
+ * Base and size in units of 4K pages
+ */
+#define TSM_TDI_REPORT_MMIO_MSIX_TABLE		BIT(0)
+#define TSM_TDI_REPORT_MMIO_PBA			BIT(1)
+#define TSM_TDI_REPORT_MMIO_IS_NON_TEE		BIT(2)
+#define TSM_TDI_REPORT_MMIO_IS_UPDATABLE	BIT(3)
+#define TSM_TDI_REPORT_MMIO_RESERVED		GENMASK(15, 4)
+#define TSM_TDI_REPORT_MMIO_RANGE_ID		GENMASK(31, 16)
+
+struct tdi_report_mmio_range {
+	__u64 first_page;		/* First 4K page with offset added */
+	__u32 num;			/* Number of 4K pages in this range */
+	__u32 range_attributes;		/* TSM_TDI_REPORT_MMIO_xxx */
+} __packed;
+
+struct tdi_report_footer {
+	__u32 device_specific_info_len;
+	__u8 device_specific_info[];
+} __packed;
+
+#define TDI_REPORT_HDR(rep)		((struct tdi_report_header *) ((rep)->data))
+#define TDI_REPORT_MR_NUM(rep)		(TDI_REPORT_HDR(rep)->mmio_range_count)
+#define TDI_REPORT_MR_OFF(rep)		((struct tdi_report_mmio_range *) (TDI_REPORT_HDR(rep) + 1))
+#define TDI_REPORT_MR(rep, rangeid)	TDI_REPORT_MR_OFF(rep)[rangeid]
+#define TDI_REPORT_FTR(rep)		((struct tdi_report_footer *) &TDI_REPORT_MR((rep), \
+					TDI_REPORT_MR_NUM(rep)))
+
 #endif /*__PCI_TSM_H */
