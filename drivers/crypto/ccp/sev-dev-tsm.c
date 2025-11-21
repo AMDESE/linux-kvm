@@ -5,6 +5,7 @@
 #include <linux/pci.h>
 #include <linux/device.h>
 #include <linux/tsm.h>
+#include <linux/kvm_host.h>
 #include <linux/iommu.h>
 #include <linux/pci-doe.h>
 #include <linux/bitfield.h>
@@ -12,6 +13,7 @@
 
 #include <asm/sev-common.h>
 #include <asm/sev.h>
+#include <asm/sev-kvm.h>
 
 #include "psp-dev.h"
 #include "sev-dev.h"
@@ -235,13 +237,29 @@ static struct pci_tsm *tio_pf0_probe(struct pci_dev *pdev, struct sev_device *se
 	return &no_free_ptr(dsm)->tsm.base_tsm;
 }
 
+static struct pci_tsm *tio_tdi_probe(struct pci_dev *pdev, struct sev_device *sev)
+{
+	struct pci_tsm *tsm __free(kfree) = kzalloc(sizeof(*tsm), GFP_KERNEL);
+	int rc;
+
+	if (!tsm)
+		return NULL;
+
+	rc = pci_tsm_link_constructor(pdev, tsm, sev->tsmdev);
+	if (rc)
+		return NULL;
+
+	pci_dbg(pdev, "TSM (sub-function) enabled\n");
+	return no_free_ptr(tsm);
+}
+
 static struct pci_tsm *dsm_probe(struct tsm_dev *tsmdev, struct pci_dev *pdev)
 {
 	struct sev_device *sev = tsm_dev_to_sev(tsmdev);
 
 	if (is_pci_tsm_pf0(pdev))
 		return tio_pf0_probe(pdev, sev);
-	return 0;
+	return tio_tdi_probe(pdev, sev);
 }
 
 static void dsm_remove(struct pci_tsm *tsm)
@@ -249,6 +267,9 @@ static void dsm_remove(struct pci_tsm *tsm)
 	struct pci_dev *pdev = tsm->pdev;
 
 	pci_dbg(pdev, "TSM disabled\n");
+
+	if (tsm->tdi)
+		pci_err(pdev, "TDI not released\n");
 
 	if (is_pci_tsm_pf0(pdev)) {
 		struct tio_dsm *dsm = container_of(tsm, struct tio_dsm, tsm.base_tsm);
@@ -264,8 +285,10 @@ static int dsm_create(struct tio_dsm *dsm)
 	u8 segment_id = pdev->bus ? pci_domain_nr(pdev->bus) : 0;
 	struct pci_dev *rootport = pcie_find_root_port(pdev);
 	u16 device_id = pci_dev_id(pdev);
+	struct page *req_page;
 	u16 root_port_id;
 	u32 lnkcap = 0;
+	int ret;
 
 	if (pci_read_config_dword(rootport, pci_pcie_cap(rootport) + PCI_EXP_LNKCAP,
 				  &lnkcap))
@@ -273,7 +296,29 @@ static int dsm_create(struct tio_dsm *dsm)
 
 	root_port_id = FIELD_GET(PCI_EXP_LNKCAP_PN, lnkcap);
 
-	return sev_tio_dev_create(&dsm->data, device_id, root_port_id, segment_id);
+	req_page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	if (!req_page)
+		return -ENOMEM;
+
+	dsm->data.guest_req_buf = page_address(req_page);
+
+	dsm->data.guest_resp_buf = snp_alloc_firmware_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	if (!dsm->data.guest_resp_buf) {
+		ret = -EIO;
+		goto free_req_exit;
+	}
+
+	ret = sev_tio_dev_create(&dsm->data, device_id, root_port_id, segment_id);
+	if (ret)
+		goto free_resp_exit;
+
+	return 0;
+
+free_resp_exit:
+	snp_free_firmware_page(dsm->data.guest_resp_buf);
+free_req_exit:
+	__free_page(req_page);
+	return ret;
 }
 
 static int dsm_connect(struct pci_dev *pdev)
@@ -340,9 +385,220 @@ static void dsm_disconnect(struct pci_dev *pdev)
 
 	sev_tio_dev_reclaim(dev_data);
 
+	if (dev_data->guest_resp_buf)
+		snp_free_firmware_page(dev_data->guest_resp_buf);
+
+	if (dev_data->guest_req_buf)
+		__free_page(virt_to_page(dev_data->guest_req_buf));
+
+	dev_data->guest_req_buf = NULL;
+	dev_data->guest_resp_buf = NULL;
+
 	streams_disable(dev_data->ide);
 	streams_unregister(dev_data->ide);
 	streams_teardown(dev_data->ide);
+}
+
+static void tdi_unbind(struct pci_tdi *tdi)
+{
+	struct tio_tdi *ttdi = container_of(tdi, struct tio_tdi, tdi);
+	struct pci_dev *pdev = tdi->pdev;
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev->tsm->dsm_dev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct tsm_tdi_tio *tdi_data = &ttdi->data;
+	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
+	int ret;
+
+	if (tdi->kvm) {
+		ret = sev_tio_tdi_unbind(dev_data, tdi_data, false);
+		ret = sev_tio_spdm_cmd(dsm, ret);
+		if (ret) {
+			ret = sev_tio_tdi_unbind(dev_data, tdi_data, true);
+			sev_tio_spdm_cmd(dsm, ret);
+		}
+	}
+
+	/* The hunk to verify transitioning to CONFIG_UNLOCKED */
+	ret = sev_tio_tdi_status(dev_data, tdi_data);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+
+	if (ret)
+		pr_err("TDI status failed to read, ret=%d\n", ret);
+	else
+		sev_tio_tdi_status_fin(dev_data, tdi_data, &state);
+
+	struct pci_dev *pf0 = pdev->tsm->dsm_dev;
+	struct pci_dev *rootport = pcie_find_root_port(pf0);
+	u8 segment_id = pci_domain_nr(rootport->bus);
+	u16 device_id = pci_dev_id(rootport);
+	bool fenced = false;
+
+	sev_tio_tdi_reclaim(dev_data, tdi_data);
+
+	if (!sev_tio_asid_fence_status(dev_data, device_id, segment_id,
+				       tdi_data->asid, &fenced)) {
+		if (fenced) {
+			ret = sev_tio_asid_fence_clear(dev_data->dev_ctx,
+						       tdi_data->gctx_paddr,
+						       &dev_data->psp_ret);
+			pci_notice(rootport, "Unfenced VM=%llx ASID=%d ret=%d %d",
+				   tdi_data->gctx_paddr, tdi_data->asid, ret,
+				   dev_data->psp_ret);
+		}
+	}
+
+	tsm_blob_free(pdev->tsm->report);
+	pdev->tsm->report = NULL;
+
+	/*
+	 * This is here and not in IOMMU as soon this will require SNP page
+	 * reclaim call into the PSP and it is in this module.
+	 */
+	struct resource *res;
+	pci_dev_for_each_resource(pdev, res) {
+		if (!res || (res->end - res->start == 0))
+			continue;
+
+		pci_notice(pdev, "Sharing %s %llx..%llx\n",
+			   res->name ? res->name : "(null)", res->start, res->end);
+		for (resource_size_t off = res->start; off < res->end; off += PAGE_SIZE)
+			rmp_make_shared(off >> PAGE_SHIFT, PG_LEVEL_4K);
+	}
+
+	kfree(ttdi);
+}
+
+static struct pci_tdi *tdi_bind(struct pci_dev *pdev, struct kvm *kvm, u32 tdi_id)
+{
+	struct tio_tdi *ttdi = kzalloc(sizeof(*ttdi), GFP_KERNEL);
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev->tsm->dsm_dev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct tsm_tdi_tio *tdi_data = &ttdi->data;
+	int dom = pci_domain_nr(pdev->bus);
+	u64 gctx;
+	u32 asid;
+	int ret;
+
+	if (!ttdi)
+		return ERR_PTR(-ENOMEM);
+
+	pci_tsm_tdi_constructor(pdev, &ttdi->tdi, kvm, tdi_id);
+
+	if (!sev->es_active)
+		return ERR_PTR(-ENOSYS);
+
+	gctx = __psp_pa((u64) sev->snp_context);
+	asid = sev->asid;
+
+	ret = sev_tio_tdi_create(dev_data, tdi_data, pci_dev_id(pdev), dom);
+	if (ret)
+		return ERR_PTR(ret);
+
+	ret = sev_tio_tdi_bind(dev_data, tdi_data, ttdi->tdi.tdi_id, gctx, asid, false);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		goto error_exit;
+
+	tio_save_output(&pdev->tsm->report, dev_data->output, SPDM_DOBJ_ID_REPORT, NULL);
+
+	ret = sev_tio_tdi_status(dev_data, tdi_data);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		goto error_exit;
+
+	ret = sev_tio_tdi_status_fin(dev_data, tdi_data, &state);
+	if (ret)
+		goto error_exit;
+
+	return &(ttdi->tdi);
+
+error_exit:
+	tdi_unbind(&ttdi->tdi);
+	return ERR_PTR(ret);
+}
+
+static int tdi_run(struct tio_dsm *dsm, struct tio_tdi *ttdi)
+{
+	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
+	struct kvm_sev_info *sev = &to_kvm_svm(ttdi->tdi.kvm)->sev_info;
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct tsm_tdi_tio *tdi_data = &ttdi->data;
+	u64 gctx_paddr;
+	u32 asid;
+	int ret = 0;
+
+	if (!sev->es_active)
+		return -ENOSYS;
+
+	gctx_paddr = __psp_pa((u64) sev->snp_context);
+	asid = sev->asid;
+
+	ret = sev_tio_tdi_status(dev_data, tdi_data);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		return ret;
+
+	ret = sev_tio_tdi_status_fin(dev_data, tdi_data, &state);
+	if (ret)
+		return ret;
+	if (state == TDISP_STATE_RUN)
+		return 0;
+
+	if (state != TDISP_STATE_CONFIG_LOCKED)
+		return -EFAULT;
+
+	ret = sev_tio_tdi_bind(dev_data, tdi_data, ttdi->tdi.tdi_id,
+			       gctx_paddr, sev->asid, true);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	if (ret)
+		return ret;
+
+	tio_save_output(&ttdi->tdi.pdev->tsm->report, dev_data->output,
+			SPDM_DOBJ_ID_REPORT, NULL);
+
+	return 0;
+}
+
+static ssize_t guest_request(struct pci_tdi *tdi, enum pci_tsm_req_scope scope,
+			     sockptr_t req, size_t reqlen,
+			     sockptr_t resp, size_t resplen,
+			     u64 *fw_err)
+{
+	struct pci_dev *pdev = tdi->pdev;
+	struct tio_tdi *ttdi = container_of(tdi, struct tio_tdi, tdi);
+	struct tio_dsm *dsm = pdev_to_tio_dsm(pdev->tsm->dsm_dev);
+	struct tsm_dsm_tio *dev_data = &dsm->data;
+	struct tsm_tdi_tio *tdi_data = &ttdi->data;
+	struct snp_guest_msg_hdr reqh;
+	int ret;
+
+	if (reqlen < sizeof(reqh) || copy_from_sockptr(&reqh, req, sizeof(reqh)))
+		return -EINVAL;
+
+	if (reqh.msg_type == TIO_MSG_MMIO_VALIDATE_REQ || reqh.msg_type == TIO_MSG_SDTE_WRITE_REQ) {
+		ret = tdi_run(dsm, ttdi);
+		if (ret)
+			return ret;
+	}
+
+	ret = copy_from_sockptr(dev_data->guest_req_buf, req, reqlen);
+	if (ret)
+		return ret;
+
+	ret = sev_tio_guest_request(dev_data, tdi_data, dev_data->guest_req_buf,
+				    dev_data->guest_resp_buf);
+	ret = sev_tio_spdm_cmd(dsm, ret);
+	*fw_err = dev_data->psp_ret;
+	if (ret)
+		return ret;
+	ret = copy_to_sockptr(resp, dev_data->guest_resp_buf, resplen);
+
+	if (ret)
+		return ret;
+
+	return resplen;
 }
 
 static struct pci_tsm_ops sev_tsm_ops = {
@@ -350,6 +606,9 @@ static struct pci_tsm_ops sev_tsm_ops = {
 	.remove = dsm_remove,
 	.connect = dsm_connect,
 	.disconnect = dsm_disconnect,
+	.bind = tdi_bind,
+	.unbind = tdi_unbind,
+	.guest_req = guest_request,
 };
 
 void sev_tsm_init_locked(struct sev_device *sev, void *tio_status_page)

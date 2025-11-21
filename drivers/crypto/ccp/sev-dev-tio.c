@@ -8,6 +8,7 @@
 #include <linux/vmalloc.h>
 #include <linux/bitfield.h>
 #include <linux/pci-doe.h>
+#include <uapi/linux/tsm.h>
 #include <asm/sev-common.h>
 #include <asm/sev.h>
 #include <asm/page.h>
@@ -16,6 +17,8 @@
 
 #define to_tio_status(dev_data)	\
 		(container_of((dev_data), struct tio_dsm, data)->sev->tio_status)
+
+#define DATA_PG(type, tdev) ((type *) ((tdev)->data_pg))
 
 #define SLA_PAGE_TYPE_DATA	0
 #define SLA_PAGE_TYPE_SCATTER	1
@@ -122,6 +125,9 @@ static size_t sla_dobj_id_to_size(u8 id)
 	case SPDM_DOBJ_ID_RESP:
 		n = sizeof(struct spdm_dobj_hdr_resp);
 		break;
+	case SPDM_DOBJ_ID_REPORT:
+		n = sizeof(struct spdm_dobj_hdr_report);
+		break;
 	default:
 		WARN_ON(1);
 		n = 0;
@@ -151,6 +157,7 @@ static struct spdm_dobj_hdr *sla_to_dobj_hdr(struct sla_buffer_hdr *buf)
 static struct spdm_dobj_hdr *sla_to_dobj_hdr_check(struct sla_buffer_hdr *buf, u32 check_dobjid)
 {
 	struct spdm_dobj_hdr *hdr = sla_to_dobj_hdr(buf);
+	u8 type;
 
 	if (WARN_ON_ONCE(!hdr))
 		return NULL;
@@ -160,7 +167,23 @@ static struct spdm_dobj_hdr *sla_to_dobj_hdr_check(struct sla_buffer_hdr *buf, u
 		return NULL;
 	}
 
+	switch (check_dobjid) {
+	case SPDM_DOBJ_ID_REPORT:
+		type = ((struct spdm_dobj_hdr_report *) hdr)->type;
+		switch (type) {
+		case TIO_SPDM_REPORT:
+			break;
+		default:
+			pr_err("! ERROR: unexpected report type=%d\n", type);
+			goto error;
+		}
+		break;
+	}
 	return hdr;
+
+error:
+	print_hex_dump(KERN_ERR, "DObj ", DUMP_PREFIX_OFFSET, 16, 1, hdr, sizeof(*hdr), false);
+	return NULL;
 }
 
 static void *sla_to_data(struct sla_buffer_hdr *buf, u32 dobjid)
@@ -301,6 +324,277 @@ struct sev_data_tio_dev_reclaim {
 	u32 length;
 	u8 reserved[4];
 	struct sla_addr_t dev_ctx_sla;
+} __packed;
+
+/**
+ * struct tio_spdm_algos - TIO SPDM algorithm identifiers
+ *
+ * @dhe: Diffie-Hellman Ephemeral algorithm identifier
+ * @aead: Authenticated Encryption with Associated Data algorithm identifier
+ * @asym: Asymmetric algorithm identifier
+ * @hash: Hash algorithm identifier
+ * @key_sched: Key schedule algorithm identifier
+ */
+struct tio_spdm_algos {
+	u8 dhe;
+	u8 aead;
+	u8 asym;
+	u8 hash;
+	u8 key_sched;
+	u8 reserved[3];
+};
+
+/**
+ * struct sev_tio_dev_status - Device status structure returned by TIO_DEV_STATUS
+ *
+ * @length: Length of this status structure
+ * @ctx_state: Current context state
+ * @request_pending: Request pending flag
+ * @request_pending_tdi: TDI-specific request pending flag
+ * @certs_slot: Certificate slot number
+ * @device_id: PCIe Routing Identifier of the device
+ * @segment_id: PCIe Segment Identifier
+ * @tc_mask: Traffic class mask
+ * @request_pending_command: Command ID of pending request
+ * @request_pending_interface_id: TDISP interface ID for pending request
+ * @meas_digest_valid: Measurement digest validity flag
+ * @no_fw_update: Firmware update disabled flag
+ * @ide_stream_id: IDE stream IDs for traffic classes
+ * @certs_digest: Certificate digest
+ * @meas_digest: Measurement digest
+ * @tdi_count: Total number of TDIs
+ * @bound_tdi_count: Number of bound TDIs
+ * @algos: TIO SPDM algorithms supported
+ *
+ * This structure is returned at sev_data_tio_dev_status::status_paddr for
+ * the TIO_DEV_STATUS command.
+ */
+#define SEV_TIO_DEV_STATUS_P1_FLAG_REQUEST_PENDING		BIT(0)
+#define SEV_TIO_DEV_STATUS_P1_FLAG_REQUEST_PENDING_TDI	BIT(1)
+#define SEV_TIO_DEV_STATUS_P2_FLAG_MEAS_DIGEST_VALID	BIT(0)
+#define SEV_TIO_DEV_STATUS_P2_FLAG_NO_FW_UPDATE		BIT(1)
+
+struct sev_tio_dev_status {
+	u32 length;
+	u8 ctx_state;
+	u8 reserved1;
+	u8 p1_flags;
+	u8 certs_slot;
+	u16 device_id;
+	u8 segment_id;
+	u8 tc_mask;
+	u16 request_pending_command;
+	u16 reserved2;
+	struct tdisp_interface_id request_pending_interface_id;
+	u8 p2_flags;
+	u8 reserved3[3];
+	u8 ide_stream_id[8];
+	u8 reserved4[8];
+	u8 certs_digest[48];
+	u8 meas_digest[48];
+	u32 tdi_count;
+	u32 bound_tdi_count;
+	struct tio_spdm_algos algos;
+} __packed;
+
+/**
+ * struct sev_data_tio_dev_status - TIO_DEV_STATUS command
+ *
+ * @length: Length in bytes of this command buffer
+ * @dev_ctx_paddr: Scatter list address of device context
+ * @status_paddr: System physical address where status will be written
+ */
+struct sev_data_tio_dev_status {
+	u32 length;
+	u32 reserved1;
+	struct sla_addr_t dev_ctx_paddr;
+	u64 status_paddr;
+	u64 reserved2;
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_create - TIO_TDI_CREATE command
+ *
+ * @length: Length in bytes of this command buffer
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: Scatter list address of TDI context
+ * @interface_id: Interface ID of the TDI as defined by TDISP (host PCIID)
+ */
+struct sev_data_tio_tdi_create {
+	u32 length;
+	u32 reserved;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	struct tdisp_interface_id interface_id;
+	u8 reserved2[12];
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_reclaim - TIO_TDI_RECLAIM command
+ *
+ * @length: Length in bytes of this command buffer
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: Scatter list address of TDI context
+ *
+ * This command reclaims resources associated with a TDI context.
+ */
+struct sev_data_tio_tdi_reclaim {
+	u32 length;
+	u32 reserved;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 reserved2;
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_bind - TIO_TDI_BIND command
+ *
+ * @length: Length in bytes of this command buffer
+ * @spdm_ctrl: SPDM control structure defined in Chapter 2
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: Scatter list address of TDI context
+ * @gctx_paddr: System physical address of guest context page
+ * @guest_device_id: PCIe Routing Identifier of the device in the guest
+ * @tdisp_lock_if_flags: TDISP lock interface flags
+ * @run_flags: Flags for TDI state transition
+ *
+ * This command binds a TDI to a guest context and prepares it for secure operation.
+ */
+#define TIO_TDI_BIND_FLAG_NO_FW_UPDATE		BIT(0)
+#define TIO_TDI_BIND_FLAG_LOCK_MSIX		BIT(2)
+#define TIO_TDI_BIND_FLAG_BIND_P2P		BIT(3)
+#define TIO_TDI_BIND_FLAG_ALL_REQUEST_REDIRECT	BIT(4)
+
+#define TIO_TDI_BIND_RUN_FORCE		BIT(0)
+
+struct sev_data_tio_tdi_bind {
+	u32 length;
+	u32 reserved;
+	struct spdm_ctrl spdm_ctrl;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 gctx_paddr;
+	u16 guest_device_id;
+	u16 tdisp_lock_if_flags; /* TIO_TDI_BIND_FLAG_xxxx */
+	u16 run_flags; /* TIO_TDI_BIND_RUN_xxxx */
+	u8 reserved3[10];
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_unbind - TIO_TDI_UNBIND command
+ *
+ * @length: Length in bytes of this command buffer
+ * @flags: Command flags
+ * @spdm_ctrl: SPDM control structure defined in Chapter 2
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: Scatter list address of TDI context
+ * @gctx_paddr: System physical address of guest context page
+ *
+ * This command unbinds a TDI from a guest context.
+ */
+#define TIO_TDI_UNBIND_FLAG_FORCE	BIT(0)
+
+struct sev_data_tio_tdi_unbind {
+	u32 length;
+	u32 flags;
+	struct spdm_ctrl spdm_ctrl;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 gctx_paddr;
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_report - TIO_TDI_REPORT command
+ *
+ * @length: Length in bytes of this command buffer
+ * @spdm_ctrl: SPDM control structure defined in Chapter 2
+ * @dev_ctx_sla: Scatter list address of the device context buffer
+ * @tdi_ctx_sla: Scatter list address of a TDI context buffer
+ * @gctx_paddr: System physical address of a guest context page
+ *
+ * This command retrieves the TDISP interface report for a TDI.
+ */
+struct sev_data_tio_tdi_report {
+	u32 length;
+	u32 reserved;
+	struct spdm_ctrl spdm_ctrl;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 gctx_paddr;
+} __packed;
+
+/**
+ * struct sev_data_tio_asid_fence_clear - TIO_ASID_FENCE_CLEAR command
+ *
+ * @length: Length in bytes of this command buffer
+ * @dev_ctx_paddr: Scatter list address of device context
+ * @gctx_paddr: System physical address of guest context page
+ *
+ * This command clears the ASID fence for a TDI.
+ */
+struct sev_data_tio_asid_fence_clear {
+	u32 length;
+	u32 reserved1;
+	struct sla_addr_t dev_ctx_paddr;
+	u64 gctx_paddr;
+	u8 reserved2[8];
+} __packed;
+
+/**
+ * struct sev_data_tio_asid_fence_status - TIO_ASID_FENCE_STATUS command
+ *
+ * @length: Length in bytes of this command buffer
+ * @dev_ctx_paddr: Scatter list address of device context
+ * @asid: Address Space Identifier to query
+ * @status_pa: System physical address where fence status will be written
+ *
+ * This command queries the fence status for a specific ASID.
+ */
+#define TIO_FENCE_DMA_STATUS_MASK	GENMASK(1, 0)
+#define TIO_FENCE_DMA_STATUS_SHIFT	0
+#define TIO_FENCE_DMA_STATUS_NOT_FENCED	0
+#define TIO_FENCE_DMA_STATUS_ERROR_FENCED 1
+#define TIO_FENCE_DMA_STATUS_RESERVED	2
+#define TIO_FENCE_DMA_STATUS_DEFAULT_FENCED 3
+
+#define TIO_FENCE_MMIO_STATUS_MASK	GENMASK(3, 2)
+#define TIO_FENCE_MMIO_STATUS_SHIFT	2
+#define TIO_FENCE_MMIO_STATUS_NOT_FENCED 0
+#define TIO_FENCE_MMIO_STATUS_RESERVED	1
+#define TIO_FENCE_MMIO_STATUS_RESERVED2	2
+#define TIO_FENCE_MMIO_STATUS_FENCED	3
+
+struct sev_data_tio_asid_fence_status {
+	u32 length;
+	u8 reserved1[4];
+	struct sla_addr_t dev_ctx_paddr;
+	u32 asid;
+	u64 status_pa;
+	u8 reserved2[4];
+} __packed;
+
+/**
+ * struct sev_data_tio_guest_request - TIO_GUEST_REQUEST command
+ *
+ * @length: Length in bytes of this command buffer
+ * @spdm_ctrl: SPDM control structure defined in Chapter 2
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: SPA of TDI context page donated by hypervisor
+ * @gctx_paddr: System physical address of guest context page
+ * @req_paddr: System physical address of request page
+ * @res_paddr: System physical address of response page
+ *
+ * This command sends a guest request for TDISP operations through the PSP.
+ */
+struct sev_data_tio_guest_request {
+	u32 length;
+	u32 reserved;
+	struct spdm_ctrl spdm_ctrl;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 gctx_paddr;
+	u64 req_paddr;
+	u64 res_paddr;
 } __packed;
 
 static struct sla_buffer_hdr *sla_buffer_map(struct sla_addr_t sla)
@@ -529,6 +823,31 @@ static int sla_expand(struct sla_addr_t *sla, size_t *len)
 	*len = newlen;
 
 	return 0;
+}
+
+bool tio_save_output(struct tsm_blob **blob, struct sla_addr_t sla,
+		     u32 check_dobjid, void *dobjhdr)
+{
+	struct sla_buffer_hdr *buf;
+	struct spdm_dobj_hdr *hdr;
+
+	tsm_blob_free(*blob);
+	*blob = NULL;
+
+	buf = sla_buffer_map(sla);
+	if (!buf)
+		return false;
+
+	hdr = sla_to_dobj_hdr_check(buf, check_dobjid);
+	if (hdr) {
+		*blob = tsm_blob_new(SPDM_DOBJ_DATA(hdr), hdr->length);
+		if (dobjhdr)
+			memcpy(dobjhdr, hdr, SPDM_DOBJ_HDR_SIZE(hdr));
+	}
+
+	sla_buffer_unmap(sla, buf);
+
+	return *blob != NULL;
 }
 
 static int sev_tio_do_cmd(int cmd, void *data, size_t data_len, int *psp_ret,
@@ -850,6 +1169,289 @@ int sev_tio_dev_disconnect(struct tsm_dsm_tio *dev_data, bool force)
 			      &dev_data->psp_ret, dev_data);
 }
 
+int sev_tio_tdi_create(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+		       u16 dev_id, u8 rseg)
+{
+	struct sev_tio_status *tio_status = to_tio_status(dev_data);
+	struct sev_data_tio_tdi_create c = {
+		.length = sizeof(c),
+	};
+	int ret;
+
+	if (!dev_data || !tdi_data) /* Device is not "connected" */
+		return -EPERM;
+
+	if (WARN_ON_ONCE(IS_SLA_NULL(dev_data->dev_ctx) || !IS_SLA_NULL(tdi_data->tdi_ctx)))
+		return -EFAULT;
+
+	tdi_data->tdi_ctx = sla_alloc(tio_status->tdictx_size, true);
+	if (IS_SLA_NULL(tdi_data->tdi_ctx))
+		return -ENOMEM;
+
+	c.dev_ctx_sla = dev_data->dev_ctx;
+	c.tdi_ctx_sla = tdi_data->tdi_ctx;
+	c.interface_id.function_id =
+		FIELD_PREP(TSM_TDISP_IID_REQUESTER_ID, dev_id);
+	if (rseg)
+		c.interface_id.function_id |=
+			FIELD_PREP(TSM_TDISP_IID_RSEG, rseg) |
+			FIELD_PREP(TSM_TDISP_IID_RSEG_VALID, 1);
+
+	ret = sev_do_cmd(SEV_CMD_TIO_TDI_CREATE, &c, &dev_data->psp_ret);
+	if (ret)
+		goto free_exit;
+
+	return 0;
+
+free_exit:
+	sla_free(tdi_data->tdi_ctx, tio_status->tdictx_size, true);
+	tdi_data->tdi_ctx = SLA_NULL;
+	return ret;
+}
+
+void sev_tio_tdi_reclaim(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data)
+{
+	struct sev_tio_status *tio_status = to_tio_status(dev_data);
+	struct sev_data_tio_tdi_reclaim r = {
+		.length = sizeof(r),
+	};
+
+	if (WARN_ON(!dev_data || !tdi_data))
+		return;
+	if (IS_SLA_NULL(dev_data->dev_ctx) || IS_SLA_NULL(tdi_data->tdi_ctx))
+		return;
+
+	r.dev_ctx_sla = dev_data->dev_ctx;
+	r.tdi_ctx_sla = tdi_data->tdi_ctx;
+
+	sev_do_cmd(SEV_CMD_TIO_TDI_RECLAIM, &r, &dev_data->psp_ret);
+
+	sla_free(tdi_data->tdi_ctx, tio_status->tdictx_size, true);
+	tdi_data->tdi_ctx = SLA_NULL;
+}
+
+int sev_tio_tdi_bind(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+		     u32 guest_rid, u64 gctx_paddr, u32 asid, bool force_run)
+{
+	struct sev_data_tio_tdi_bind b = {
+		.length = sizeof(b),
+	};
+
+	if (WARN_ON_ONCE(IS_SLA_NULL(dev_data->dev_ctx) || IS_SLA_NULL(tdi_data->tdi_ctx)))
+		return -EFAULT;
+
+	tdi_data->gctx_paddr = gctx_paddr;
+	tdi_data->asid = asid;
+
+	spdm_ctrl_init(&b.spdm_ctrl, dev_data);
+	b.dev_ctx_sla = dev_data->dev_ctx;
+	b.tdi_ctx_sla = tdi_data->tdi_ctx;
+	b.guest_device_id = guest_rid;
+	b.gctx_paddr = tdi_data->gctx_paddr;
+	b.run_flags = force_run ? TIO_TDI_BIND_RUN_FORCE : 0;
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_TDI_BIND, &b, sizeof(b),
+			      &dev_data->psp_ret, dev_data);
+}
+
+int sev_tio_tdi_unbind(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+		       bool force)
+{
+	struct sev_data_tio_tdi_unbind ub = {
+		.length = sizeof(ub),
+		.flags = force ? TIO_TDI_UNBIND_FLAG_FORCE : 0,
+	};
+
+	if (WARN_ON(!tdi_data || !dev_data))
+		return 0;
+
+	if (WARN_ON(!tdi_data->gctx_paddr))
+		return -EFAULT;
+
+	spdm_ctrl_init(&ub.spdm_ctrl, dev_data);
+	ub.dev_ctx_sla = dev_data->dev_ctx;
+	ub.tdi_ctx_sla = tdi_data->tdi_ctx;
+	ub.gctx_paddr = tdi_data->gctx_paddr;
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_TDI_UNBIND, &ub, sizeof(ub),
+			      &dev_data->psp_ret, dev_data);
+}
+
+int sev_tio_tdi_report(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data)
+{
+	struct sev_data_tio_tdi_report r = {
+		.length = sizeof(r),
+		.dev_ctx_sla = dev_data->dev_ctx,
+		.tdi_ctx_sla = tdi_data->tdi_ctx,
+		.gctx_paddr = tdi_data->gctx_paddr,
+	};
+
+	if (WARN_ON_ONCE(IS_SLA_NULL(dev_data->dev_ctx) || IS_SLA_NULL(tdi_data->tdi_ctx)))
+		return -EFAULT;
+
+	spdm_ctrl_init(&r.spdm_ctrl, dev_data);
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_TDI_REPORT, &r, sizeof(r),
+			      &dev_data->psp_ret, dev_data);
+}
+
+int sev_tio_asid_fence_clear(struct sla_addr_t dev_ctx, u64 gctx_paddr, int *psp_ret)
+{
+	struct sev_data_tio_asid_fence_clear c = {
+		.length = sizeof(c),
+		.dev_ctx_paddr = dev_ctx,
+		.gctx_paddr = gctx_paddr,
+	};
+
+	return sev_do_cmd(SEV_CMD_TIO_ASID_FENCE_CLEAR, &c, psp_ret);
+}
+
+int sev_tio_asid_fence_status(struct tsm_dsm_tio *dev_data, u16 device_id, u8 segment_id,
+			      u32 asid, bool *fenced)
+{
+	u64 *status = DATA_PG(u64, dev_data);
+	struct sev_data_tio_asid_fence_status s = {
+		.length = sizeof(s),
+		.dev_ctx_paddr = dev_data->dev_ctx,
+		.asid = asid,
+		.status_pa = __psp_pa(status),
+	};
+	int ret;
+
+	ret = sev_do_cmd(SEV_CMD_TIO_ASID_FENCE_STATUS, &s, &dev_data->psp_ret);
+
+	if (ret == SEV_RET_SUCCESS) {
+		u8 dma_status = FIELD_GET(TIO_FENCE_DMA_STATUS_MASK, *status);
+		u8 mmio_status = FIELD_GET(TIO_FENCE_MMIO_STATUS_MASK, *status);
+
+		switch (dma_status) {
+		case TIO_FENCE_DMA_STATUS_NOT_FENCED:
+			*fenced = false;
+			break;
+		case TIO_FENCE_DMA_STATUS_ERROR_FENCED:
+		case TIO_FENCE_DMA_STATUS_DEFAULT_FENCED:
+			*fenced = true;
+			break;
+		default:
+			pr_err("%04x:%x:%x.%d: undefined DMA fence state %#llx\n",
+			       segment_id, PCI_BUS_NUM(device_id),
+			       PCI_SLOT(device_id), PCI_FUNC(device_id), *status);
+			*fenced = true;
+			break;
+		}
+
+		switch (mmio_status) {
+		case TIO_FENCE_MMIO_STATUS_NOT_FENCED:
+			*fenced = false;
+			break;
+		case TIO_FENCE_MMIO_STATUS_FENCED:
+			*fenced = true;
+			break;
+		default:
+			pr_err("%04x:%x:%x.%d: undefined MMIO fence state %#llx\n",
+			       segment_id, PCI_BUS_NUM(device_id),
+			       PCI_SLOT(device_id), PCI_FUNC(device_id), *status);
+			*fenced = true;
+			break;
+		}
+	}
+
+	return ret;
+}
+
+int sev_tio_guest_request(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+			  void *req, void *res)
+{
+	struct sev_data_tio_guest_request gr = {
+		.length = sizeof(gr),
+		.dev_ctx_sla = dev_data->dev_ctx,
+		.tdi_ctx_sla = tdi_data->tdi_ctx,
+		.gctx_paddr = tdi_data->gctx_paddr,
+		.req_paddr = __psp_pa(req),
+		.res_paddr = __psp_pa(res),
+	};
+
+	if (WARN_ON(!tdi_data || !dev_data))
+		return -EINVAL;
+
+	spdm_ctrl_init(&gr.spdm_ctrl, dev_data);
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_GUEST_REQUEST, &gr, sizeof(gr),
+			      &dev_data->psp_ret, dev_data);
+}
+
+/**
+ * struct sev_tio_tdi_status_data - TDI status data returned by TIO_TDI_STATUS
+ *
+ * @length: Length of this status data structure
+ * @tdisp_state: Current TDISP state of the TDI
+ */
+struct sev_tio_tdi_status_data {
+	u32 length;
+	u8 tdisp_state;
+	u8 reserved1[0x10-0x5];
+} __packed;
+
+/**
+ * struct sev_data_tio_tdi_status - TIO_TDI_STATUS command
+ *
+ * @length: Length in bytes of this command buffer
+ * @spdm_ctrl: SPDM control structure defined in Chapter 2
+ * @dev_ctx_sla: Scatter list address of device context
+ * @tdi_ctx_sla: Scatter list address of TDI context
+ * @status_paddr: System physical address where status will be written
+ */
+struct sev_data_tio_tdi_status {
+	u32 length;
+	u32 reserved1;
+	struct spdm_ctrl spdm_ctrl;
+	struct sla_addr_t dev_ctx_sla;
+	struct sla_addr_t tdi_ctx_sla;
+	u64 status_paddr;
+} __packed;
+
+int sev_tio_tdi_status(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data)
+{
+	struct sev_tio_tdi_status_data *data =
+		DATA_PG(struct sev_tio_tdi_status_data, dev_data);
+	struct sev_data_tio_tdi_status status = {
+		.length = sizeof(status),
+		.dev_ctx_sla = dev_data->dev_ctx,
+		.tdi_ctx_sla = tdi_data->tdi_ctx,
+		.status_paddr = __psp_pa(data),
+	};
+
+	if (IS_SLA_NULL(dev_data->dev_ctx) || IS_SLA_NULL(tdi_data->tdi_ctx))
+		return -ENXIO;
+
+	spdm_ctrl_init(&status.spdm_ctrl, dev_data);
+
+	return sev_tio_do_cmd(SEV_CMD_TIO_TDI_STATUS, &status, sizeof(status),
+			      &dev_data->psp_ret, dev_data);
+}
+
+#define TIO_TDISP_STATE_CONFIG_UNLOCKED	0
+#define TIO_TDISP_STATE_CONFIG_LOCKED	1
+#define TIO_TDISP_STATE_RUN		2
+#define TIO_TDISP_STATE_ERROR		3
+
+int sev_tio_tdi_status_fin(struct tsm_dsm_tio *dev_data, struct tsm_tdi_tio *tdi_data,
+			   enum tsm_tdisp_state *state)
+{
+	struct sev_tio_tdi_status_data *data = dev_data->data_pg;
+
+	switch (data->tdisp_state) {
+#define __TDISP_STATE(y) case TIO_TDISP_STATE_##y: *state = TDISP_STATE_##y; break
+	__TDISP_STATE(CONFIG_UNLOCKED);
+	__TDISP_STATE(CONFIG_LOCKED);
+	__TDISP_STATE(RUN);
+	__TDISP_STATE(ERROR);
+#undef __TDISP_STATE
+	}
+
+	return 0;
+}
+
 int sev_tio_cmd_buffer_len(int cmd)
 {
 	switch (cmd) {
@@ -859,6 +1461,15 @@ int sev_tio_cmd_buffer_len(int cmd)
 	case SEV_CMD_TIO_DEV_RECLAIM:		return sizeof(struct sev_data_tio_dev_reclaim);
 	case SEV_CMD_TIO_DEV_CONNECT:		return sizeof(struct sev_data_tio_dev_connect);
 	case SEV_CMD_TIO_DEV_DISCONNECT:	return sizeof(struct sev_data_tio_dev_disconnect);
+	case SEV_CMD_TIO_TDI_CREATE:		return sizeof(struct sev_data_tio_tdi_create);
+	case SEV_CMD_TIO_TDI_RECLAIM:		return sizeof(struct sev_data_tio_tdi_reclaim);
+	case SEV_CMD_TIO_TDI_BIND:		return sizeof(struct sev_data_tio_tdi_bind);
+	case SEV_CMD_TIO_TDI_UNBIND:		return sizeof(struct sev_data_tio_tdi_unbind);
+	case SEV_CMD_TIO_TDI_REPORT:		return sizeof(struct sev_data_tio_tdi_report);
+	case SEV_CMD_TIO_TDI_STATUS:		return sizeof(struct sev_data_tio_tdi_status);
+	case SEV_CMD_TIO_GUEST_REQUEST:		return sizeof(struct sev_data_tio_guest_request);
+	case SEV_CMD_TIO_ASID_FENCE_CLEAR:	return sizeof(struct sev_data_tio_asid_fence_clear);
+	case SEV_CMD_TIO_ASID_FENCE_STATUS: return sizeof(struct sev_data_tio_asid_fence_status);
 	default:				return 0;
 	}
 }

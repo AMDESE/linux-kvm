@@ -12,6 +12,7 @@
 #ifndef __PSP_SEV_H__
 #define __PSP_SEV_H__
 
+#include <linux/tsm.h>
 #include <uapi/linux/psp-sev.h>
 
 #define SEV_FW_BLOB_MAX_SIZE	0x4000	/* 16KB */
@@ -116,6 +117,17 @@ enum sev_cmd {
 	SEV_CMD_TIO_DEV_RECLAIM		= 0x0D3,
 	SEV_CMD_TIO_DEV_CONNECT		= 0x0D4,
 	SEV_CMD_TIO_DEV_DISCONNECT	= 0x0D5,
+	SEV_CMD_TIO_TDI_CREATE		= 0x0DA,
+	SEV_CMD_TIO_TDI_RECLAIM		= 0x0DB,
+	SEV_CMD_TIO_TDI_BIND		= 0x0DC,
+	SEV_CMD_TIO_TDI_UNBIND		= 0x0DD,
+	SEV_CMD_TIO_TDI_REPORT		= 0x0DE,
+	SEV_CMD_TIO_TDI_STATUS		= 0x0DF,
+	SEV_CMD_TIO_GUEST_REQUEST	= 0x0E0,
+	SEV_CMD_TIO_ASID_FENCE_CLEAR	= 0x0E1,
+	SEV_CMD_TIO_ASID_FENCE_STATUS	= 0x0E2,
+	SEV_CMD_TIO_TDI_INFO		= 0x0E3,
+	SEV_CMD_TDI_DIGEST_REPORT       = 0x0E4,
 	SEV_CMD_MAX,
 };
 
@@ -741,6 +753,11 @@ struct sev_data_snp_guest_request {
 	u64 req_paddr;				/* In */
 	u64 res_paddr;				/* In */
 } __packed;
+
+struct tio_guest_request {
+	struct sev_data_snp_guest_request data;
+	int fw_err;
+};
 
 /**
  * struct sev_data_snp_init_ex - SNP_INIT_EX structure
