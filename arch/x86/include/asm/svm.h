@@ -379,6 +379,8 @@ struct vmcb_save_area {
 	u64 ibs_dc_linear_addr;
 	u64 ibs_br_target;
 	u64 ibs_fetch_extd_ctl;
+	u64 ibs_fetch_ctl2;
+	u64 ibs_op_ctl2;
 } __packed;
 
 /* Save area definition for SEV-ES and SEV-SNP guests */
@@ -561,7 +563,7 @@ struct vmcb {
 	};
 } __packed;
 
-#define EXPECTED_VMCB_SAVE_AREA_SIZE		1992
+#define EXPECTED_VMCB_SAVE_AREA_SIZE		2008
 #define EXPECTED_GHCB_SAVE_AREA_SIZE		1032
 #define EXPECTED_SEV_ES_SAVE_AREA_SIZE		1648
 #define EXPECTED_VMCB_CONTROL_AREA_SIZE		1024

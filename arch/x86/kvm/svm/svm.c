@@ -786,6 +786,13 @@ static void svm_recalc_ibs_msr_intercepts(struct kvm_vcpu *vcpu)
 	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSDCLINAD, MSR_TYPE_RW, intercept);
 	svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSBRTARGET, MSR_TYPE_RW, intercept);
 	svm_set_intercept_for_msr(vcpu, MSR_AMD64_ICIBSEXTDCTL, MSR_TYPE_RW, intercept);
+
+	if (kvm_cpu_cap_has(X86_FEATURE_IBS_DISABLE)) {
+		svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSFETCHCTL2, MSR_TYPE_RW,
+				intercept);
+		svm_set_intercept_for_msr(vcpu, MSR_AMD64_IBSOPCTL2, MSR_TYPE_RW,
+				intercept);
+	}
 }
 
 static void svm_recalc_msr_intercepts(struct kvm_vcpu *vcpu)
@@ -3169,6 +3176,7 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	case MSR_AMD64_IBSDCPHYSAD:
 	case MSR_AMD64_IBSFETCHPHYSAD:
 		return 1;
+
 	default:
 		return kvm_set_msr_common(vcpu, msr);
 	}
@@ -5380,6 +5388,10 @@ static void svm_ibs_set_cpu_caps(void)
 		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_FETCHCTLEXTD);
 		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_ZEN4_EXT);
 		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_LOADLATFIL);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_DISABLE);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_FETCHLATFIL);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_ADDRFILTER);
+		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_STRMST_RMTSOCKET);
 		kvm_cpu_cap_check_and_set(X86_FEATURE_IBS_ZEN4_DTLBSTAT);
 	}
 }
