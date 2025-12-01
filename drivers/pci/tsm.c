@@ -317,6 +317,8 @@ static int __pci_tsm_unbind(struct pci_dev *pdev, void *data)
 	to_pci_tsm_ops(pdev->tsm)->unbind(tdi);
 	pdev->tsm->tdi = NULL;
 
+	sysfs_update_group(&pdev->dev.kobj, &pci_tsm_attr_group);
+
 	return 0;
 }
 
