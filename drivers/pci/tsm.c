@@ -338,6 +338,8 @@ static int __pci_tsm_unbind(struct pci_dev *pdev, void *data)
 	to_pci_tsm_ops(pdev->tsm)->unbind(tdi);
 	pdev->tsm->tdi = NULL;
 
+	sysfs_update_group(&pdev->dev.kobj, &pci_tsm_attr_group);
+
 	return 0;
 }
 
@@ -651,9 +653,7 @@ static int pci_tsm_accept(struct pci_dev *pdev)
 	if (rc)
 		return rc;
 
-	device_cc_accept(&pdev->dev);
-
-	return 0;
+	return device_cc_accept(&pdev->dev);
 }
 
 static ssize_t accept_store(struct device *dev, struct device_attribute *attr,
