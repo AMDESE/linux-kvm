@@ -6553,6 +6553,53 @@ KVM_S390_KEYOP_SSKE
   Sets the storage key for the guest address ``guest_addr`` to the key
   specified in ``key``, returning the previous value in ``key``.
 
+4.145 KVM_GET_LAPIC2
+----------------------
+
+:Capability: KVM_CAP_LAPIC2
+:Architectures: x86
+:Type: vcpu ioctl
+:Parameters: struct kvm_lapic_state2 (out)
+:Returns: 0 on success, negative on failure
+
+Reads the extended Local APIC registers, including both the standard APIC
+register space (offsets 0h-3FFh) and the extended APIC register space (offsets
+400h-500h and beyond).
+
+This ioctl is similar to KVM_GET_LAPIC but operates on a 4KB APIC
+register space that includes extended LVT registers available on AMD processors
+with the ExtApicSpace feature.
+
+::
+
+  #define KVM_APIC_EXT_REG_SIZE 0x1000
+  struct kvm_lapic_state2 {
+      char regs[KVM_APIC_EXT_REG_SIZE];
+  };
+
+4.146 KVM_SET_LAPIC2
+----------------------
+
+:Capability: KVM_CAP_LAPIC2
+:Architectures: x86
+:Type: vcpu ioctl
+:Parameters: struct kvm_lapic_state2 (in)
+:Returns: 0 on success, negative on failure
+
+Sets the extended Local APIC registers, including both the standard APIC
+register space and the extended APIC register space.
+
+This ioctl is similar to KVM_SET_LAPIC but operates on a 4KB APIC register space
+that includes extended LVT registers for AMD processors.
+
+::
+
+  #define KVM_APIC_EXT_REG_SIZE 0x1000
+  struct kvm_lapic_stat2 {
+      char regs[KVM_APIC_EXT_REG_SIZE];
+  };
+>>>>>>> KVM: Add KVM_GET_LAPIC2 and KVM_SET_LAPIC2 for extended APIC
+
 .. _kvm_run:
 
 5. The kvm_run structure
