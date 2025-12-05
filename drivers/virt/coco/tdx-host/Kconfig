@@ -1,0 +1,17 @@
+config TDX_HOST_SERVICES
+	tristate "TDX Host Services Driver"
+	depends on INTEL_TDX_HOST
+	default m if INTEL_TDX_HOST
+	help
+	  Enable access to TDX host services like module update and
+	  extensions (e.g. TDX Connect).
+
+	  Say y or m if enabling support for confidential virtual machine
+	  support (CONFIG_INTEL_TDX_HOST). The module is called tdx_host.ko
+
+config TDX_CONNECT
+	bool
+	depends on TDX_HOST_SERVICES
+	depends on PCI_TSM
+	depends on ACPI
+	default TDX_HOST_SERVICES
