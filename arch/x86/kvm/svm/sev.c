@@ -3179,6 +3179,12 @@ void sev_free_vcpu(struct kvm_vcpu *vcpu)
 	svm = to_svm(vcpu);
 
 	/*
+	 * If KVM terminated after a vCPU exited due to a VMGEXIT, the GHCB
+	 * page might still be mapped.
+	 */
+	kvm_vcpu_unmap(&svm->vcpu, &svm->sev_es.ghcb_map);
+
+	/*
 	 * If it's an SNP guest, then the VMSA was marked in the RMP table as
 	 * a guest-owned page. Transition the page to hypervisor state before
 	 * releasing it back to the system.
@@ -3451,6 +3457,8 @@ vmgexit_err:
 
 void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 {
+	struct vmcb_control_area *control = &svm->vmcb->control;
+
 	/* Clear any indication that the vCPU is in a type of AP Reset Hold */
 	svm->sev_es.ap_reset_hold_type = AP_RESET_HOLD_NONE;
 
@@ -3477,6 +3485,14 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 	}
 
 	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, svm->sev_es.ghcb);
+
+	/* Release current read-only mapping of the GHCB */
+	kvm_vcpu_unmap(&svm->vcpu, &svm->sev_es.ghcb_map);
+
+	/* As is done elsewhere, return to guest if GHCB is not accessible. */
+	if (kvm_vcpu_map(&svm->vcpu, control->ghcb_gpa >> PAGE_SHIFT,
+			 &svm->sev_es.ghcb_map))
+		return;
 
 	sev_es_sync_to_ghcb(svm);
 
@@ -4296,7 +4312,7 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		return 1;
 	}
 
-	if (kvm_vcpu_map(vcpu, ghcb_gpa >> PAGE_SHIFT, &svm->sev_es.ghcb_map)) {
+	if (kvm_vcpu_map_readonly(vcpu, ghcb_gpa >> PAGE_SHIFT, &svm->sev_es.ghcb_map)) {
 		/* Unable to map GHCB from guest */
 		vcpu_unimpl(vcpu, "vmgexit: error mapping GHCB [%#llx] from guest\n",
 			    ghcb_gpa);
