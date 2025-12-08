@@ -3166,7 +3166,7 @@ int __kvm_vcpu_map(struct kvm_vcpu *vcpu, gfn_t gfn, struct kvm_host_map *map,
 }
 EXPORT_SYMBOL_GPL(__kvm_vcpu_map);
 
-void kvm_vcpu_unmap(struct kvm_vcpu *vcpu, struct kvm_host_map *map)
+void __kvm_vcpu_unmap(struct kvm_vcpu *vcpu, struct kvm_host_map *map, bool track_dirty)
 {
 	if (!map->hva)
 		return;
@@ -3178,7 +3178,7 @@ void kvm_vcpu_unmap(struct kvm_vcpu *vcpu, struct kvm_host_map *map)
 		memunmap(map->hva);
 #endif
 
-	if (map->writable)
+	if (track_dirty && map->writable)
 		kvm_vcpu_mark_page_dirty(vcpu, map->gfn);
 
 	if (map->pinned_page) {
@@ -3191,6 +3191,12 @@ void kvm_vcpu_unmap(struct kvm_vcpu *vcpu, struct kvm_host_map *map)
 	map->hva = NULL;
 	map->page = NULL;
 	map->pinned_page = NULL;
+}
+EXPORT_SYMBOL_GPL(__kvm_vcpu_unmap);
+
+void kvm_vcpu_unmap(struct kvm_vcpu *vcpu, struct kvm_host_map *map)
+{
+	__kvm_vcpu_unmap(vcpu, map, true);
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_unmap);
 
