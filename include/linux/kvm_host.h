@@ -755,6 +755,14 @@ struct kvm_memslots {
 	int node_idx;
 };
 
+typedef void (*kvm_finalize_workfn)(void *data);
+
+struct kvm_finalize_work {
+	struct list_head list;
+	void *data;
+	kvm_finalize_workfn fn;
+};
+
 struct kvm {
 #ifdef KVM_HAVE_MMU_RWLOCK
 	rwlock_t mmu_lock;
@@ -865,6 +873,7 @@ struct kvm {
 	struct xarray mem_attr_array;
 #endif
 	char stats_id[KVM_STATS_NAME_SIZE];
+	struct list_head finalize_work_list;  /* Work functions needed to finalize VM */
 };
 
 #define kvm_err(fmt, ...) \
@@ -2603,5 +2612,14 @@ void kvm_disable_virtualization(void);
 static inline int kvm_enable_virtualization(void) { return 0; }
 static inline void kvm_disable_virtualization(void) { }
 #endif
+
+/*
+ * In some cases a task might want to defer exit until the KVM instance has
+ * reached its final stages before freeing itself. This interface allows
+ * for callbacks to be queued up for processing at this stage. It is expected,
+ * in particular, that KVM will no longer hold references to any memory that
+ * was being used to back the VM prior to shutdown/destroy.
+ */
+void kvm_enqueue_finalize_work(struct kvm *kvm, kvm_finalize_workfn fn, void *data);
 
 #endif
