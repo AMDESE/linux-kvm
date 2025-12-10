@@ -1432,7 +1432,7 @@ int kvm_gmem_mapping_order(struct kvm_memory_slot *slot, gfn_t gfn,
 	index_floor = round_down(index, nr_pages);
 
 	order = 0;
-	if (kvm_gmem_range_has_attributes(&gi->attributes, index,
+	if (kvm_gmem_range_has_attributes(&gi->attributes, index_floor,
 					  nr_pages,
 					  KVM_MEMORY_ATTRIBUTE_PRIVATE)) {
 		order = gi->page_order;
