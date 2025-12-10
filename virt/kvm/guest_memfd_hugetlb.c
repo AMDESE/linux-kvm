@@ -35,6 +35,12 @@ static void *gmem_hugetlb_setup(size_t size, u8 page_order)
 	long hpages;
 	int ret;
 
+	if (WARN_ON_ONCE(!IS_ALIGNED(size, 1 << page_order))) {
+		pr_debug("%s: Rounding up allocation size from 0x%lx to 0x%lx\n",
+			 __func__, size, round_up(size, huge_page_size(h)));
+		size = round_up(size, (1 << page_order));
+	}
+
 	private = kzalloc(sizeof(*private), GFP_KERNEL);
 	if (!private)
 		return ERR_PTR(-ENOMEM);
@@ -48,6 +54,7 @@ static void *gmem_hugetlb_setup(size_t size, u8 page_order)
 
 	h = hugetlb_order_to_hstate(page_order);
 	hpages = size >> (page_order + PAGE_SHIFT);
+	WARN_ON_ONCE(!hpages);
 	spool = hugepage_new_subpool(h, hpages, hpages, false);
 	if (!spool)
 		goto err_uncharge;
