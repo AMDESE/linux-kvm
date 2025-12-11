@@ -760,7 +760,14 @@ static long kvm_gmem_set_attributes(struct file *file, void __user *argp)
 	index = attrs.offset >> PAGE_SHIFT;
 	r = __kvm_gmem_set_attributes(inode, index, nr_pages, attrs.attributes,
 				      &err_index);
-	if (r) {
+
+	/*
+	 * TODO: rather than retrying conversion for the entire range, userspace
+	 * should instead use the error_offset to retry the ioctl for just the
+	 * remaining range, with a 0 or EAGAIN return rather than EFAULT, but
+	 * for now just have userspace retry the whole thing.
+	 */
+	if (r && r != -EAGAIN) {
 		attrs.error_offset = err_index << PAGE_SHIFT;
 
 		if (copy_to_user(argp, &attrs, sizeof(attrs)))
