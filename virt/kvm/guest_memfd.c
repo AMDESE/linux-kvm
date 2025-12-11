@@ -1279,8 +1279,14 @@ int kvm_gmem_create(struct kvm *kvm, struct kvm_create_guest_memfd *args)
 			return -EINVAL;
 	}
 
-	if (size <= 0 || !IS_ALIGNED(size, PAGE_SIZE << page_order))
+	if (size <= 0)
 		return -EINVAL;
+
+	if (!IS_ALIGNED(size, PAGE_SIZE << page_order)) {
+		pr_debug("%s: Rounding up allocation size from 0x%llx to 0x%llx\n",
+			 __func__, size, round_up(size, PAGE_SIZE << page_order));
+		size = round_up(size, PAGE_SIZE << page_order);
+	}
 
 	return __kvm_gmem_create(kvm, size, flags, page_order);
 }
