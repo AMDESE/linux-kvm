@@ -220,6 +220,11 @@ err:
 static void __merge_folio_to_order(struct folio *folio, unsigned int to_order)
 {
 	struct address_space *mapping = folio->mapping;
+	int i;
+
+	/* the head folio will track the memcg association now. */
+	for (i = 1; i < (1 << to_order); i++)
+		folio_page(folio, i)->memcg_data = 0;
 
 	prep_compound_page(folio_page(folio, 0), to_order);
 
