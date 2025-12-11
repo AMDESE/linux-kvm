@@ -2784,8 +2784,19 @@ static void __sev_firmware_shutdown(struct sev_device *sev, bool panic)
 	__sev_snp_shutdown_locked(&error, panic);
 }
 
+/*
+ * 2P systems have 2xPSP instances so sev_firmware_shutdown() gets called
+ * twice and may attempt to call __sev_firmware_shutdown() before
+ * sev_tsm_uninit() returned.
+ * FIXME: this is ugly.
+ */
+static DEFINE_MUTEX(sev_firmware_shutdown_mutex);
+
 static void sev_firmware_shutdown(struct sev_device *sev)
 {
+	dev_err(sev->dev, "___K___ %s %u\n", __func__, __LINE__);
+	mutex_lock(&sev_firmware_shutdown_mutex);
+
 	/*
 	 * Calling without sev_cmd_mutex held as TSM will likely try disconnecting
 	 * IDE and this ends up calling sev_do_cmd() which locks sev_cmd_mutex.
@@ -2801,6 +2812,8 @@ static void sev_firmware_shutdown(struct sev_device *sev)
 	sev->tio_status = NULL;
 
 	mutex_unlock(&sev_cmd_mutex);
+
+	mutex_unlock(&sev_firmware_shutdown_mutex);
 }
 
 void sev_platform_shutdown(void)
