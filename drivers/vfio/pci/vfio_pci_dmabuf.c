@@ -299,7 +299,11 @@ int vfio_pci_core_feature_dma_buf(struct vfio_pci_core_device *vdev, u32 flags,
 	 * dma_buf_fd() consumes the reference, when the file closes the dmabuf
 	 * will be released.
 	 */
-	return dma_buf_fd(priv->dmabuf, get_dma_buf.open_flags);
+	ret = dma_buf_fd(priv->dmabuf, get_dma_buf.open_flags);
+	pci_err(vdev->pdev, "___K___ %s %u: %d ranges, region#%d, fd=%d\n", __func__, __LINE__,
+		get_dma_buf.nr_ranges,
+		get_dma_buf.nr_ranges >= 1 ? dma_ranges[0].region_index:-1, ret);
+	return ret;
 
 err_dev_put:
 	vfio_device_put_registration(&vdev->vdev);
