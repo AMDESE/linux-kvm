@@ -241,7 +241,7 @@ static int merge_unreferenced_folio(struct folio *first_folio, u8 to_order)
 
 	__folio_set_hugetlb(first_folio);
 	h = hugetlb_order_to_hstate(folio_order(first_folio));
-	hugetlb_vmemmap_optimize_folio(h, first_folio);
+	hugetlb_vmemmap_optimize_folio_nosync(h, first_folio);
 
 	return 0;
 }
