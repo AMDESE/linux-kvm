@@ -1183,16 +1183,20 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 		return RET_PF_RETRY;
 
 	if (is_shadow_present_pte(iter->old_spte) &&
-	    (fault->prefetch || is_access_allowed(fault, iter->old_spte)) &&
+	    (fault->prefetch ||
+	     is_access_allowed(fault, iter->old_spte, vcpu)) &&
 	    is_last_spte(iter->old_spte, iter->level)) {
 		WARN_ON_ONCE(fault->pfn != spte_to_pfn(iter->old_spte));
 		return RET_PF_SPURIOUS;
 	}
 
 	if (unlikely(!fault->slot))
-		new_spte = make_mmio_spte(vcpu, iter->gfn, ACC_RWX);
+		new_spte = make_mmio_spte(vcpu, iter->gfn,
+					  ACC_ALL);
 	else
-		wrprot = make_spte(vcpu, sp, fault->slot, ACC_RWX, iter->gfn,
+		wrprot = make_spte(vcpu, sp, fault->slot,
+				   ACC_ALL,
+				   iter->gfn,
 				   fault->pfn, iter->old_spte, fault->prefetch,
 				   false, fault->map_writable, &new_spte);
 
@@ -1220,7 +1224,7 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 				     new_spte);
 		ret = RET_PF_EMULATE;
 	} else {
-		trace_kvm_mmu_set_spte(iter->level, iter->gfn,
+		trace_kvm_mmu_set_spte(vcpu, iter->level, iter->gfn,
 				       rcu_dereference(iter->sptep));
 	}
 

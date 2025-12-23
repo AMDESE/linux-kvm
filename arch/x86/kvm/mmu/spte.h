@@ -45,8 +45,9 @@ static_assert(SPTE_TDP_AD_ENABLED == 0);
 #define ACC_EXEC_MASK    1
 #define ACC_WRITE_MASK   PT_WRITABLE_MASK
 #define ACC_USER_MASK    PT_USER_MASK
+#define ACC_USER_EXEC_MASK (1ULL << 3)
 #define ACC_RWX          (ACC_EXEC_MASK | ACC_WRITE_MASK | ACC_USER_MASK)
-#define ACC_ALL          ACC_RWX
+#define ACC_ALL          (ACC_RWX | ACC_USER_EXEC_MASK)
 
 /* The mask for the R/X bits in EPT PTEs */
 #define SPTE_EPT_READABLE_MASK			0x1ull
@@ -180,6 +181,7 @@ extern u64 __read_mostly shadow_mmu_writable_mask;
 extern u64 __read_mostly shadow_nx_mask;
 extern u64 __read_mostly shadow_x_mask; /* mutual exclusive with nx_mask */
 extern u64 __read_mostly shadow_user_mask;
+extern u64 __read_mostly shadow_ux_mask;
 extern u64 __read_mostly shadow_accessed_mask;
 extern u64 __read_mostly shadow_dirty_mask;
 extern u64 __read_mostly shadow_mmio_value;
@@ -344,9 +346,53 @@ static inline bool is_last_spte(u64 pte, int level)
 	return (level == PG_LEVEL_4K) || is_large_pte(pte);
 }
 
-static inline bool is_executable_pte(u64 spte)
+static inline bool is_executable_pte(u64 spte, bool is_user_access,
+				     struct kvm_vcpu *vcpu)
 {
-	return (spte & (shadow_x_mask | shadow_nx_mask)) == shadow_x_mask;
+	if (spte & shadow_nx_mask)
+		return false;
+
+	if (!mmu_has_mbec(vcpu))
+		return (spte & shadow_x_mask) == shadow_x_mask;
+
+	/*
+	 * Warn against AMD systems (where shadow_x_mask == 0) reaching
+	 * this point, so this will always evaluate to true for user-mode
+	 * pages, but until GMET is implemented, this should be a no-op.
+	 */
+	if (WARN_ON_ONCE(!shadow_x_mask))
+		return is_user_access || !(spte & shadow_user_mask);
+
+	return spte & (is_user_access ? shadow_ux_mask : shadow_x_mask);
+}
+
+static inline bool is_executable_pte_fault(u64 spte,
+					   struct kvm_page_fault *fault,
+					   struct kvm_vcpu *vcpu)
+{
+	if (spte & shadow_nx_mask)
+		return false;
+
+	if (!mmu_has_mbec(vcpu))
+		return (spte & shadow_x_mask) == shadow_x_mask;
+
+	/*
+	 * Warn against AMD systems (where shadow_x_mask == 0) reaching
+	 * this point, so this will always evaluate to true for user-mode
+	 * pages, but until GMET is implemented, this should be a no-op.
+	 */
+	if (WARN_ON_ONCE(!shadow_x_mask))
+		return fault->user || !(spte & shadow_user_mask);
+
+	/*
+	 * For TDP MMU, the fault->user bit indicates a read access,
+	 * not the guest's CPL. For execute faults, check both execute
+	 * permissions since we don't know the actual CPL.
+	 */
+	if (fault->is_tdp)
+		return spte & (shadow_x_mask | shadow_ux_mask);
+
+	return spte & (fault->user ? shadow_ux_mask : shadow_x_mask);
 }
 
 static inline kvm_pfn_t spte_to_pfn(u64 pte)
@@ -479,10 +525,11 @@ static inline bool is_mmu_writable_spte(u64 spte)
  * SPTE protections.  Note, the caller is responsible for checking that the
  * SPTE is a shadow-present, leaf SPTE (either before or after).
  */
-static inline bool is_access_allowed(struct kvm_page_fault *fault, u64 spte)
+static inline bool is_access_allowed(struct kvm_page_fault *fault, u64 spte,
+				     struct kvm_vcpu *vcpu)
 {
 	if (fault->exec)
-		return is_executable_pte(spte);
+		return is_executable_pte_fault(spte, fault, vcpu);
 
 	if (fault->write)
 		return is_writable_pte(spte);

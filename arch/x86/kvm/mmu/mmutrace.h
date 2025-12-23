@@ -22,10 +22,16 @@
 	__entry->root_count = sp->root_count;		\
 	__entry->unsync = sp->unsync;
 
+/*
+ * X == ACC_EXEC_MASK: executable without guest_exec_control and only
+ *                     supervisor execute with guest exec control
+ * x == ACC_USER_EXEC_MASK: user execute with guest exec control
+ */
 #define KVM_MMU_PAGE_PRINTK() ({				        \
 	const char *saved_ptr = trace_seq_buffer_ptr(p);		\
 	static const char *access_str[] = {			        \
-		"---", "--x", "w--", "w-x", "-u-", "-ux", "wu-", "wux"  \
+		"----", "---X", "-w--", "-w-X", "--u-", "--uX", "-wu-", "-wuX", \
+		"x---", "x--X", "xw--", "xw-X", "x-u-", "x-uX", "xwu-", "xwuX"	\
 	};							        \
 	union kvm_mmu_page_role role;				        \
 								        \
@@ -336,8 +342,8 @@ TRACE_EVENT(
 
 TRACE_EVENT(
 	kvm_mmu_set_spte,
-	TP_PROTO(int level, gfn_t gfn, u64 *sptep),
-	TP_ARGS(level, gfn, sptep),
+	TP_PROTO(struct kvm_vcpu *vcpu, int level, gfn_t gfn, u64 *sptep),
+	TP_ARGS(vcpu, level, gfn, sptep),
 
 	TP_STRUCT__entry(
 		__field(u64, gfn)
@@ -346,7 +352,8 @@ TRACE_EVENT(
 		__field(u8, level)
 		/* These depend on page entry type, so compute them now.  */
 		__field(bool, r)
-		__field(bool, x)
+		__field(bool, kx)
+		__field(bool, ux)
 		__field(signed char, u)
 	),
 
@@ -356,15 +363,17 @@ TRACE_EVENT(
 		__entry->sptep = virt_to_phys(sptep);
 		__entry->level = level;
 		__entry->r = shadow_present_mask || (__entry->spte & PT_PRESENT_MASK);
-		__entry->x = is_executable_pte(__entry->spte);
+		__entry->kx = is_executable_pte(__entry->spte, false, vcpu);
+		__entry->ux = is_executable_pte(__entry->spte, true, vcpu);
 		__entry->u = shadow_user_mask ? !!(__entry->spte & shadow_user_mask) : -1;
 	),
 
-	TP_printk("gfn %llx spte %llx (%s%s%s%s) level %d at %llx",
+	TP_printk("gfn %llx spte %llx (%s%s%s%s%s) level %d at %llx",
 		  __entry->gfn, __entry->spte,
 		  __entry->r ? "r" : "-",
 		  __entry->spte & PT_WRITABLE_MASK ? "w" : "-",
-		  __entry->x ? "x" : "-",
+		  __entry->kx ? "X" : "-",
+		  __entry->ux ? "x" : "-",
 		  __entry->u == -1 ? "" : (__entry->u ? "u" : "-"),
 		  __entry->level, __entry->sptep
 	)

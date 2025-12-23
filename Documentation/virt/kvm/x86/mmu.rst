@@ -172,7 +172,14 @@ Shadow pages contain the following information:
     quadrant maps 1GB virtual address space.
   role.access:
     Inherited guest access permissions from the parent ptes in the form uwx.
-    Note execute permission is positive, not negative.
+    Note execute permission is positive, not negative. When Intel MBEC is
+    not enabled, permissions follow the uwx form. When Intel MBEC is enabled,
+    execute is split into two permissions, kernel executable and user
+    executable, with the split controlled by role.has_mbec.
+  role.has_mbec:
+    When role.has_mbec=1, Intel mode-based execute control is active, which
+    gives the guest the ability to split execute pages into two permissions,
+    kernel executable and user executable.
   role.invalid:
     The page is invalid and should not be used.  It is a root page that is
     currently pinned (by a cpu hardware register pointing to it); once it is

@@ -30,6 +30,7 @@ u64 __read_mostly shadow_host_writable_mask;
 u64 __read_mostly shadow_mmu_writable_mask;
 u64 __read_mostly shadow_nx_mask;
 u64 __read_mostly shadow_x_mask; /* mutual exclusive with nx_mask */
+u64 __read_mostly shadow_ux_mask;
 u64 __read_mostly shadow_user_mask;
 u64 __read_mostly shadow_accessed_mask;
 u64 __read_mostly shadow_dirty_mask;
@@ -223,18 +224,37 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	 * would tie make_spte() further to vCPU/MMU state, and add complexity
 	 * just to optimize a mode that is anything but performance critical.
 	 */
-	if (level > PG_LEVEL_4K && (pte_access & ACC_EXEC_MASK) &&
+	if (level > PG_LEVEL_4K &&
+	    (pte_access & (ACC_EXEC_MASK | ACC_USER_EXEC_MASK)) &&
 	    is_nx_huge_page_enabled(vcpu->kvm)) {
 		pte_access &= ~ACC_EXEC_MASK;
+		if (mmu_has_mbec(vcpu))
+			pte_access &= ~ACC_USER_EXEC_MASK;
 	}
 
-	if (pte_access & ACC_EXEC_MASK)
-		spte |= shadow_x_mask;
-	else
+	if (pte_access & (ACC_EXEC_MASK | ACC_USER_EXEC_MASK)) {
+		if (pte_access & ACC_EXEC_MASK)
+			spte |= shadow_x_mask;
+
+		if (pte_access & ACC_USER_EXEC_MASK)
+			spte |= shadow_ux_mask;
+	} else {
 		spte |= shadow_nx_mask;
+	}
 
 	if (pte_access & ACC_USER_MASK)
 		spte |= shadow_user_mask;
+
+	/*
+	 * With MBEC enabled, EPT misconfigurations occur if bit 0 is clear
+	 * (read disabled) and bit 10 is set (user-executable). Prevent the
+	 * creation of such invalid SPTEs by clearing the user-executable bit
+	 * when read access is not permitted.
+	 */
+	if (mmu_has_mbec(vcpu) &&
+	    !(spte & VMX_EPT_READABLE_MASK) &&
+	    (spte & VMX_EPT_USER_EXECUTABLE_MASK))
+		spte &= ~VMX_EPT_USER_EXECUTABLE_MASK;
 
 	if (level > PG_LEVEL_4K)
 		spte |= PT_PAGE_SIZE_MASK;
@@ -311,15 +331,19 @@ static u64 modify_spte_protections(u64 spte, u64 set, u64 clear)
 	KVM_MMU_WARN_ON(set & clear);
 	spte = (spte | set) & ~clear;
 
+	/*
+	 * With MBEC enabled, ensure we don't create invalid SPTEs where
+	 * read access is disabled but user-executable access is enabled.
+	 */
+	if (shadow_ux_mask &&
+	    !(spte & VMX_EPT_READABLE_MASK) &&
+	    (spte & VMX_EPT_USER_EXECUTABLE_MASK))
+		spte &= ~VMX_EPT_USER_EXECUTABLE_MASK;
+
 	if (is_access_track)
 		spte = mark_spte_for_access_track(spte);
 
 	return spte;
-}
-
-static u64 make_spte_executable(u64 spte)
-{
-	return modify_spte_protections(spte, shadow_x_mask, shadow_nx_mask);
 }
 
 static u64 make_spte_nonexecutable(u64 spte)
@@ -356,8 +380,14 @@ u64 make_small_spte(struct kvm *kvm, u64 huge_spte,
 		 * the page executable as the NX hugepage mitigation no longer
 		 * applies.
 		 */
-		if ((role.access & ACC_EXEC_MASK) && is_nx_huge_page_enabled(kvm))
-			child_spte = make_spte_executable(child_spte);
+		if ((role.access & (ACC_EXEC_MASK | ACC_USER_EXEC_MASK)) &&
+		    is_nx_huge_page_enabled(kvm)) {
+			if (role.access & ACC_EXEC_MASK)
+				child_spte |= shadow_x_mask;
+
+			if (role.access & ACC_USER_EXEC_MASK)
+				child_spte |= shadow_ux_mask;
+		}
 	}
 
 	return child_spte;
@@ -389,7 +419,8 @@ u64 make_nonleaf_spte(u64 *child_pt, bool ad_disabled)
 	u64 spte = SPTE_MMU_PRESENT_MASK;
 
 	spte |= __pa(child_pt) | shadow_present_mask | PT_WRITABLE_MASK |
-		shadow_user_mask | shadow_x_mask | shadow_me_value;
+		shadow_user_mask | shadow_ux_mask | shadow_x_mask |
+		shadow_me_value;
 
 	if (ad_disabled)
 		spte |= SPTE_TDP_AD_DISABLED;
@@ -489,7 +520,8 @@ void kvm_mmu_set_me_spte_mask(u64 me_value, u64 me_mask)
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_mmu_set_me_spte_mask);
 
-void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only)
+void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only,
+			   bool has_mbec)
 {
 	kvm_ad_enabled		= has_ad_bits;
 
@@ -501,7 +533,7 @@ void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only)
 	/* VMX_EPT_SUPPRESS_VE_BIT is needed for W or X violation. */
 	shadow_present_mask	=
 		(has_exec_only ? 0ull : VMX_EPT_READABLE_MASK) | VMX_EPT_SUPPRESS_VE_BIT;
-
+	shadow_ux_mask		= has_mbec ? VMX_EPT_USER_EXECUTABLE_MASK : 0ull;
 	shadow_acc_track_mask	= VMX_EPT_RWX_MASK;
 	shadow_host_writable_mask = EPT_SPTE_HOST_WRITABLE;
 	shadow_mmu_writable_mask  = EPT_SPTE_MMU_WRITABLE;
@@ -509,9 +541,11 @@ void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only)
 	/*
 	 * EPT Misconfigurations are generated if the value of bits 2:0
 	 * of an EPT paging-structure entry is 110b (write/execute).
+	 * With MBEC, the additional case of bit 0 clear and bit 10 set
+	 * (read disabled but user-executable) is prevented in make_spte().
 	 */
 	kvm_mmu_set_mmio_spte_mask(VMX_EPT_MISCONFIG_WX_VALUE,
-				   VMX_EPT_RWX_MASK | VMX_EPT_SUPPRESS_VE_BIT, 0);
+				   (VMX_EPT_RWX_MASK | VMX_EPT_SUPPRESS_VE_BIT), 0);
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_mmu_set_ept_masks);
 
@@ -551,6 +585,7 @@ void kvm_mmu_reset_all_pte_masks(void)
 	shadow_dirty_mask	= PT_DIRTY_MASK;
 	shadow_nx_mask		= PT64_NX_MASK;
 	shadow_x_mask		= 0;
+	shadow_ux_mask		= 0;
 	shadow_present_mask	= PT_PRESENT_MASK;
 
 	shadow_acc_track_mask	= 0;
