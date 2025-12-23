@@ -95,6 +95,8 @@ int kvm_handle_page_fault(struct kvm_vcpu *vcpu, u64 error_code,
 				u64 fault_address, char *insn, int insn_len);
 void __kvm_mmu_refresh_passthrough_bits(struct kvm_vcpu *vcpu,
 					struct kvm_mmu *mmu);
+bool mbec_permission_fault(struct kvm_vcpu *vcpu, unsigned int pte_access,
+			   unsigned int pfec);
 
 int kvm_mmu_load(struct kvm_vcpu *vcpu);
 void kvm_mmu_unload(struct kvm_vcpu *vcpu);
@@ -216,7 +218,10 @@ static inline u8 permission_fault(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 
 	kvm_mmu_refresh_passthrough_bits(vcpu, mmu);
 
-	fault = (mmu->permissions[index] >> pte_access) & 1;
+	if (mmu_has_mbec(vcpu))
+		fault = mbec_permission_fault(vcpu, pte_access, pfec);
+	else
+		fault = (mmu->permissions[index] >> pte_access) & 1;
 
 	WARN_ON_ONCE(pfec & (PFERR_PK_MASK | PFERR_SS_MASK | PFERR_RSVD_MASK));
 	if (unlikely(mmu->pkru_mask)) {

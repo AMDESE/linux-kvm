@@ -286,7 +286,13 @@ enum x86_intercept_stage;
  * when the guest was accessing private memory.
  */
 #define PFERR_PRIVATE_ACCESS   BIT_ULL(49)
-#define PFERR_SYNTHETIC_MASK   (PFERR_IMPLICIT_ACCESS | PFERR_PRIVATE_ACCESS)
+/*
+ * USER_FETCH_MASK is a KVM-defined flag used to indicate user fetches when
+ * translating EPT violations for Intel MBEC.
+ */
+#define PFERR_USER_FETCH_MASK  BIT_ULL(50)
+#define PFERR_SYNTHETIC_MASK   (PFERR_IMPLICIT_ACCESS | PFERR_PRIVATE_ACCESS | \
+				PFERR_USER_FETCH_MASK)
 
 /* apic attention bits */
 #define KVM_APIC_CHECK_VAPIC	0

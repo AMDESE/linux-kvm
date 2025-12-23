@@ -383,14 +383,18 @@ static inline bool is_executable_pte_fault(u64 spte,
 	 */
 	if (WARN_ON_ONCE(!shadow_x_mask))
 		return fault->user || !(spte & shadow_user_mask);
-
 	/*
-	 * For TDP MMU, the fault->user bit indicates a read access,
-	 * not the guest's CPL. For execute faults, check both execute
-	 * permissions since we don't know the actual CPL.
+	 * For TDP MMU, fault->user indicates a read access, not CPL.
+	 * For execute faults, we don't know the CPL here, so we can't
+	 * definitively check permissions. Being optimistic and checking
+	 * for any execute permission can lead to infinite fault loops
+	 * if the wrong type of execute permission is present (e.g. UX
+	 * only for a kernel fetch). The safe approach is to be
+	 * pessimistic and return false, forcing the fault to the slow
+	 * path which can do a full permission check.
 	 */
 	if (fault->is_tdp)
-		return spte & (shadow_x_mask | shadow_ux_mask);
+		return false;
 
 	return spte & (fault->user ? shadow_ux_mask : shadow_x_mask);
 }

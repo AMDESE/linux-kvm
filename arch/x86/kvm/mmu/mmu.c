@@ -5664,6 +5664,72 @@ void __kvm_mmu_refresh_passthrough_bits(struct kvm_vcpu *vcpu,
 	reset_guest_paging_metadata(vcpu, mmu);
 }
 
+/*
+ * Check permissions for MBEC-enabled EPT accesses.
+ * Handles all permission checks with MBEC awareness (UX/KX distinction).
+ *
+ * Returns true if access should fault, false otherwise.
+ */
+bool mbec_permission_fault(struct kvm_vcpu *vcpu, unsigned int pte_access,
+			   unsigned int pfec)
+{
+	bool has_ux = pte_access & ACC_USER_EXEC_MASK;
+	bool has_kx = pte_access & ACC_EXEC_MASK;
+	bool write_fault = false;
+	bool fetch_fault = false;
+	bool read_fault = false;
+
+	/*
+	 * Fault conditions:
+	 * - Write fault: pfec has WRITE_MASK set but pte_access lacks
+	 *   WRITE permission
+	 * - Fetch fault: pfec has FETCH_MASK set but pte_access lacks
+	 *   matching execute permission. For MBEC, checks both guest PTE
+	 *   U/S bits and CPL, both are additive:
+	 *   * If neither UX nor KX is set:
+	 *       always fault (no execute permission at all)
+	 *   * User fetch (guest PTE user OR CPL > 0):
+	 *       requires UX permission (has_ux)
+	 *   * Kernel fetch (guest PTE supervisor AND CPL = 0):
+	 *       requires KX permission (has_kx)
+	 * - Read fault: pfec has USER_MASK set (read access in EPT
+	 *   context) but pte_access lacks read permission
+	 *
+	 * Note: In EPT context, PFERR_USER_MASK indicates read access,
+	 * not user-mode access. This is different from regular paging
+	 * where PFERR_USER_MASK means user-mode (CPL=3).
+	 * ACC_USER_MASK in EPT context maps to VMX_EPT_READABLE_MASK
+	 * (bit 0), the readable permission.
+	 */
+
+	/* Check write permission independently */
+	if (pfec & PFERR_WRITE_MASK)
+		write_fault = !(pte_access & ACC_WRITE_MASK);
+
+	/* Check fetch permission independently */
+	if (pfec & PFERR_FETCH_MASK) {
+		/*
+		 * For MBEC, check execute permissions. A fetch faults if:
+		 * - User fetch (guest PTE user OR CPL > 0) lacks UX permission
+		 * - Kernel fetch (guest PTE supervisor AND CPL = 0) lacks KX permission
+		 */
+		bool is_user_fetch = (pfec & PFERR_USER_FETCH_MASK) ||
+				     (kvm_x86_call(get_cpl)(vcpu) > 0);
+
+		/*
+		 * A user-mode fetch requires user-execute permission (UX).
+		 * A kernel-mode fetch requires kernel-execute permission (KX).
+		 */
+		fetch_fault = is_user_fetch ? !has_ux : !has_kx;
+	}
+
+	/* Check read permission: PFERR_USER_MASK indicates read in EPT */
+	if (pfec & PFERR_USER_MASK)
+		read_fault = !(pte_access & ACC_USER_MASK);
+
+	return write_fault || fetch_fault || read_fault;
+}
+
 static inline int kvm_mmu_get_tdp_level(struct kvm_vcpu *vcpu)
 {
 	int maxpa;

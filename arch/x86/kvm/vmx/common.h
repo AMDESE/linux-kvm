@@ -83,6 +83,7 @@ static inline bool vt_is_tdx_private_gpa(struct kvm *kvm, gpa_t gpa)
 static inline int __vmx_handle_ept_violation(struct kvm_vcpu *vcpu, gpa_t gpa,
 					     unsigned long exit_qualification)
 {
+	unsigned long rwx_mask;
 	u64 error_code;
 
 	/* Is it a read fault? */
@@ -92,16 +93,17 @@ static inline int __vmx_handle_ept_violation(struct kvm_vcpu *vcpu, gpa_t gpa,
 	error_code |= (exit_qualification & EPT_VIOLATION_ACC_WRITE)
 		      ? PFERR_WRITE_MASK : 0;
 	/* Is it a fetch fault? */
-	error_code |= (exit_qualification & EPT_VIOLATION_ACC_INSTR)
-		      ? PFERR_FETCH_MASK : 0;
-	/*
-	 * ept page table entry is present?
-	 * note: unconditionally clear USER_EXEC until mode-based
-	 * execute control is implemented
-	 */
-	error_code |= (exit_qualification &
-		       (EPT_VIOLATION_PROT_MASK & ~EPT_VIOLATION_PROT_USER_EXEC))
-		      ? PFERR_PRESENT_MASK : 0;
+	if (exit_qualification & EPT_VIOLATION_ACC_INSTR) {
+		error_code |= PFERR_FETCH_MASK;
+		if (mmu_has_mbec(vcpu) &&
+		    exit_qualification & EPT_VIOLATION_PROT_USER_EXEC)
+			error_code |= PFERR_USER_FETCH_MASK;
+	}
+	/* ept page table entry is present? */
+	rwx_mask = EPT_VIOLATION_PROT_MASK;
+	if (mmu_has_mbec(vcpu))
+		rwx_mask |= EPT_VIOLATION_PROT_USER_EXEC;
+	error_code |= (exit_qualification & rwx_mask) ? PFERR_PRESENT_MASK : 0;
 
 	if (exit_qualification & EPT_VIOLATION_GVA_IS_VALID)
 		error_code |= (exit_qualification & EPT_VIOLATION_GVA_TRANSLATED) ?
