@@ -3452,7 +3452,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		if (it.level == fault->goal_level)
 			break;
 
-		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn, true, ACC_ALL);
+		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn, true, ACC_RWX);
 		if (sp == ERR_PTR(-EEXIST))
 			continue;
 
@@ -3465,7 +3465,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_RWX,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
@@ -3698,7 +3698,7 @@ static int fast_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		 * current CPU took the fault.
 		 *
 		 * Need not check the access of upper level table entries since
-		 * they are always ACC_ALL.
+		 * they are always ACC_RWX.
 		 */
 		if (is_access_allowed(fault, spte)) {
 			ret = RET_PF_SPURIOUS;
@@ -4804,7 +4804,7 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	if (r)
 		return r;
 
-	r = kvm_mmu_faultin_pfn(vcpu, fault, ACC_ALL);
+	r = kvm_mmu_faultin_pfn(vcpu, fault, ACC_RWX);
 	if (r != RET_PF_CONTINUE)
 		return r;
 
@@ -4895,7 +4895,7 @@ static int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu,
 	if (r)
 		return r;
 
-	r = kvm_mmu_faultin_pfn(vcpu, fault, ACC_ALL);
+	r = kvm_mmu_faultin_pfn(vcpu, fault, ACC_RWX);
 	if (r != RET_PF_CONTINUE)
 		return r;
 
@@ -5614,7 +5614,7 @@ static union kvm_cpu_role kvm_calc_cpu_role(struct kvm_vcpu *vcpu,
 {
 	union kvm_cpu_role role = {0};
 
-	role.base.access = ACC_ALL;
+	role.base.access = ACC_RWX;
 	role.base.smm = is_smm(vcpu);
 	role.base.guest_mode = is_guest_mode(vcpu);
 	role.ext.valid = 1;
@@ -5695,7 +5695,7 @@ kvm_calc_tdp_mmu_root_page_role(struct kvm_vcpu *vcpu,
 {
 	union kvm_mmu_page_role role = {0};
 
-	role.access = ACC_ALL;
+	role.access = ACC_RWX;
 	role.cr0_wp = true;
 	role.efer_nx = true;
 	role.smm = cpu_role.base.smm;
@@ -5826,7 +5826,7 @@ kvm_calc_shadow_ept_root_page_role(struct kvm_vcpu *vcpu, bool accessed_dirty,
 	role.base.direct = false;
 	role.base.ad_disabled = !accessed_dirty;
 	role.base.guest_mode = true;
-	role.base.access = ACC_ALL;
+	role.base.access = ACC_RWX;
 
 	role.ext.word = 0;
 	role.ext.execonly = execonly;
