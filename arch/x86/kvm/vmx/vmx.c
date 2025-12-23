@@ -2658,6 +2658,7 @@ static int setup_vmcs_config(struct vmcs_config *vmcs_conf,
 			return -EIO;
 
 		vmx_cap->ept = 0;
+		_cpu_based_2nd_exec_control &= ~SECONDARY_EXEC_MODE_BASED_EPT_EXEC;
 		_cpu_based_2nd_exec_control &= ~SECONDARY_EXEC_EPT_VIOLATION_VE;
 	}
 	if (!(_cpu_based_2nd_exec_control & SECONDARY_EXEC_ENABLE_VPID) &&
@@ -4585,6 +4586,12 @@ static u32 vmx_secondary_exec_control(struct vcpu_vmx *vmx)
 	 * base configuration as KVM emulates VMFUNC[EPTP_SWITCHING] for L2.
 	 */
 	exec_control &= ~SECONDARY_EXEC_ENABLE_VMFUNC;
+
+	/*
+	 * KVM doesn't support mode-based EPT execute control for L1, but the
+	 * capability is advertised to L1 guests so they can use it for L2.
+	 */
+	exec_control &= ~SECONDARY_EXEC_MODE_BASED_EPT_EXEC;
 
 	/* SECONDARY_EXEC_DESC is enabled/disabled on writes to CR4.UMIP,
 	 * in vmx_set_cr4.  */
