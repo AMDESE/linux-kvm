@@ -39,7 +39,8 @@
 #define GHCB_VERSION_MAX	2ULL
 #define GHCB_VERSION_MIN	1ULL
 
-#define GHCB_HV_FT_SUPPORTED	(GHCB_HV_FT_SNP | GHCB_HV_FT_SNP_AP_CREATION)
+#define GHCB_HV_FT_SUPPORTED	(GHCB_HV_FT_SNP | GHCB_HV_FT_SNP_AP_CREATION |	\
+				GHCB_HV_FT_SNP_SEV_TIO)
 
 /* enable/disable SEV support */
 static bool sev_enabled = true;
@@ -3491,8 +3492,13 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		if (!sev_snp_guest(vcpu->kvm) || !kvm_ghcb_sw_scratch_is_valid(svm))
 			goto vmgexit_err;
 		break;
+	case SVM_VMGEXIT_SEV_TIO_OP:
+		if (!sev_snp_guest(vcpu->kvm))
+			goto vmgexit_err;
+		break;
 	case SVM_VMGEXIT_GUEST_REQUEST:
 	case SVM_VMGEXIT_EXT_GUEST_REQUEST:
+	case SVM_VMGEXIT_SEV_TIO_GR:
 		if (!sev_snp_guest(vcpu->kvm) ||
 		    !PAGE_ALIGNED(control->exit_info_1) ||
 		    !PAGE_ALIGNED(control->exit_info_2) ||
@@ -4206,6 +4212,232 @@ request_invalid:
 	return 1; /* resume guest */
 }
 
+static int snp_complete_sev_tio_bind(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
+				SNP_GUEST_ERR(0, vcpu->run->vmgexit.tio_op.fw_err));
+	ghcb_set_rcx(svm->sev_es.ghcb, vcpu->run->vmgexit.tio_op.fw_tdi_id);
+
+	return 1; /* Resume guest */
+}
+
+static int snp_sev_tio_op(struct kvm_vcpu *vcpu, u64 exit_info_1, u64 exit_info_2)
+{
+	u32 op;
+
+	vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+	vcpu->run->vmgexit.type = KVM_USER_VMGEXIT_TIO_OP;
+
+#define SVM_VMGEXIT_SEV_TIO_OP_BIND	0
+#define SVM_VMGEXIT_SEV_TIO_OP_UNBIND	1
+#define SVM_VMGEXIT_SEV_TIO_OP_RUN	2
+#define SVM_VMGEXIT_SEV_TIO_OP_STOP	3
+	switch (SVM_VMGEXIT_SEV_TIO_OP_ACTION(exit_info_1)) {
+	case SVM_VMGEXIT_SEV_TIO_OP_BIND:
+		op = KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_BIND;
+		break;
+	case SVM_VMGEXIT_SEV_TIO_OP_UNBIND:
+		op = KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_UNBIND;
+		break;
+	case SVM_VMGEXIT_SEV_TIO_OP_RUN:
+		op = KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_RUN;
+		break;
+	case SVM_VMGEXIT_SEV_TIO_OP_STOP:
+		op = KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_STOP;
+		break;
+	default:
+		return 1;
+	}
+	vcpu->run->vmgexit.tio_op.op = op;
+	vcpu->run->vmgexit.tio_op.guest_rid = SVM_VMGEXIT_SEV_TIO_OP_GUEST_ID(exit_info_1);
+	vcpu->arch.complete_userspace_io = snp_complete_sev_tio_bind;
+
+	return 0; /* Exit KVM */
+}
+
+static int rmp_mmio_update(struct kvm_vcpu *vcpu, gfn_t gfn, size_t len, bool private)
+{
+	struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	int max_order = 0, ret = 0;
+	kvm_pfn_t pfn = 0;
+
+	if (!slot)
+		return -ENODEV;
+
+	for (phys_addr_t off = 0; off < len; off += PAGE_SIZE) {
+		ret = kvm_vfio_dmabuf_get_pfn(vcpu->kvm, slot,
+					      gfn + (off >> PAGE_SHIFT),
+					      &pfn, &max_order);
+		if (ret)
+			break;
+
+		if (private)
+			ret = rmp_make_private_mmio(pfn, (gfn << PAGE_SHIFT) + off,
+						    sev->asid);
+		else
+			ret = rmp_make_shared_mmio(pfn);
+
+		if (ret)
+			break;
+	}
+	return ret;
+
+}
+
+static int rmp_mmio_reclaim(struct kvm_vcpu *vcpu, gfn_t gfn, size_t len)
+{
+	struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+	struct sev_data_snp_page_reclaim data = {};
+	int max_order = 0, ret, fw_err;
+	kvm_pfn_t pfn = 0;
+
+	if (!slot)
+		return -EINVAL;
+
+	for (phys_addr_t off = 0; off < len; off += PAGE_SIZE) {
+		ret = kvm_vfio_dmabuf_get_pfn(vcpu->kvm, slot,
+					      gfn + (off >> PAGE_SHIFT),
+					      &pfn, &max_order);
+		if (ret)
+			break;
+
+		data.paddr = __sme_set(pfn << PAGE_SHIFT);
+		ret = sev_do_cmd(SEV_CMD_SNP_PAGE_RECLAIM, &data, &fw_err);
+		if (ret)
+			pr_err("Failed reclaim %llx, rc=%d fw=0x%x\n",
+			       pfn << PAGE_SHIFT, ret, fw_err);
+	}
+	return ret;
+}
+
+static int snp_complete_sev_tio_guest_request(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct vmcb_control_area *control = &svm->vmcb->control;
+	gpa_t req_gpa = control->exit_info_1;
+	struct kvm *kvm = vcpu->kvm;
+	u8 msg_type = 0;
+	int ret;
+
+	ret = kvm_read_guest(kvm, req_gpa + offsetof(struct snp_guest_msg_hdr, msg_type),
+			     &msg_type, 1);
+	if (ret) {
+		ret = -EDOM;
+		return ret;
+	}
+
+	if (msg_type == TIO_MSG_TDI_INFO_REQ) {
+		vcpu->arch.regs[VCPU_REGS_RDX] = vcpu->run->vmgexit.tio_req.tdi_status;
+	} else if (msg_type == TIO_MSG_MMIO_VALIDATE_REQ) {
+		gfn_t gfn = SVM_VMGEXIT_SEV_TIO_GR_MMIO_GFN(vcpu->arch.regs[VCPU_REGS_RDX]);
+		size_t len = SVM_VMGEXIT_SEV_TIO_GR_MMIO_LEN(vcpu->arch.regs[VCPU_REGS_RDX]);
+		bool private = SVM_VMGEXIT_SEV_TIO_GR_MMIO_PRIVATE(vcpu->arch.regs[VCPU_REGS_RDX]);
+
+		ret = rmp_mmio_reclaim(vcpu, gfn, len);
+		if (ret)
+			return ret;
+
+		if (!private) {
+			ret = rmp_mmio_update(vcpu, gfn, len, false);
+			if (ret) {
+				pr_err_ratelimited("Failed to find pfn for gfn=%llx, ret=%d\n", gfn, ret);
+				return ret;
+			}
+		}
+	}
+
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
+				SNP_GUEST_ERR(0, vcpu->run->vmgexit.tio_req.fw_err));
+
+	return 1; /* Resume guest */
+}
+
+static int snp_sev_tio_guest_request(struct kvm_vcpu *vcpu, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_sev_info *sev;
+	u8 msg_type;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return SEV_RET_INVALID_GUEST;
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	ret = kvm_read_guest(kvm, req_gpa + offsetof(struct snp_guest_msg_hdr, msg_type),
+			     &msg_type, 1);
+	if (ret)
+		return ret;
+
+	vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+	vcpu->run->vmgexit.type = KVM_USER_VMGEXIT_TIO_REQ;
+	vcpu->run->vmgexit.tio_req.guest_rid = vcpu->arch.regs[VCPU_REGS_RCX];
+	vcpu->run->vmgexit.tio_req.flags = 0;
+	if (msg_type == TIO_MSG_TDI_INFO_REQ) {
+		u64 param = vcpu->arch.regs[VCPU_REGS_RDX];
+
+		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_STATE)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_STATE;
+		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_REPORT)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_REPORT;
+	} else if (msg_type == TIO_MSG_MMIO_VALIDATE_REQ) {
+		gfn_t gfn = SVM_VMGEXIT_SEV_TIO_GR_MMIO_GFN(vcpu->arch.regs[VCPU_REGS_RDX]);
+		size_t len = SVM_VMGEXIT_SEV_TIO_GR_MMIO_LEN(vcpu->arch.regs[VCPU_REGS_RDX]);
+		bool private = SVM_VMGEXIT_SEV_TIO_GR_MMIO_PRIVATE(vcpu->arch.regs[VCPU_REGS_RDX]);
+
+		/* Always rmp_mmio_update to set Immutable */
+		ret = rmp_mmio_update(vcpu, gfn, len, true);
+		if (ret) {
+			pr_err_ratelimited("Failed to find pfn for gfn=%llx, ret=%d\n", gfn, ret);
+			return ret;
+		}
+
+		if (private)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_VALIDATE;
+
+		/*
+		 * SEV-TIO works with gmemfd VMs only which require vm_memory_attributes=0
+		 * so the userspace cannot change attributes via KVM_CAP_MEMORY_ATTRIBUTES2.
+		 * OTH VFIO MMIO fd is not gmemfd so gmemfd does not manage attributes for
+		 * secure MMIO, do it here explicitly.
+		 */
+		struct kvm_memory_attributes2 a = {
+			.address = gfn << PAGE_SHIFT,
+			.size = len,
+			.attributes = private ? KVM_MEMORY_ATTRIBUTE_PRIVATE : 0
+		};
+
+		ret = kvm_vm_ioctl_set_mem_attributes(kvm, &a);
+		if (ret) {
+			pr_err_ratelimited("Failed to mark gfn=%llx as private, ret=%d\n",
+					   gfn, ret);
+			return ret;
+		}
+
+		vcpu->run->vmgexit.tio_req.gpa = vcpu->arch.regs[VCPU_REGS_RDX];
+	} else if (msg_type == TIO_MSG_MMIO_CONFIG_REQ) {
+		vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_CONFIG;
+		vcpu->run->vmgexit.tio_req.gpa = vcpu->arch.regs[VCPU_REGS_RDX];
+	} else if (msg_type == TIO_MSG_SDTE_WRITE_REQ) {
+		u64 flags = vcpu->arch.regs[VCPU_REGS_RDX];
+
+		vcpu->run->vmgexit.tio_req.gpa = flags & SVM_VMGEXIT_SEV_TIO_GR_SDTE_VTOM;
+		if (flags & SVM_VMGEXIT_SEV_TIO_GR_SDTE_VALIDATE)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_SDTE_VALIDATE;
+	}
+
+	vcpu->run->vmgexit.tio_req.data_gpa = vcpu->arch.regs[VCPU_REGS_RAX];
+	vcpu->run->vmgexit.tio_req.data_npages = vcpu->arch.regs[VCPU_REGS_RBX];
+	vcpu->run->vmgexit.tio_req.req_spa = req_gpa;
+	vcpu->run->vmgexit.tio_req.rsp_spa = resp_gpa;
+	vcpu->arch.complete_userspace_io = snp_complete_sev_tio_guest_request;
+
+	return 0; /* Exit KVM */
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -4481,6 +4713,12 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		break;
 	case SVM_VMGEXIT_EXT_GUEST_REQUEST:
 		ret = snp_handle_ext_guest_req(svm, control->exit_info_1, control->exit_info_2);
+		break;
+	case SVM_VMGEXIT_SEV_TIO_GR:
+		ret = snp_sev_tio_guest_request(vcpu, control->exit_info_1, control->exit_info_2);
+		break;
+	case SVM_VMGEXIT_SEV_TIO_OP:
+		ret = snp_sev_tio_op(vcpu, control->exit_info_1, control->exit_info_2);
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,

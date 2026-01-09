@@ -136,6 +136,44 @@ struct kvm_xen_exit {
 	} u;
 };
 
+struct kvm_user_vmgexit {
+#define KVM_USER_VMGEXIT_TIO_REQ	4
+#define KVM_USER_VMGEXIT_TIO_OP	5
+	__u32 type; /* KVM_USER_VMGEXIT_* type */
+	union {
+		struct {
+			__u32 guest_rid;	/* in */
+			__u16 ret;		/* out */
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_STATE	BIT(0)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_REPORT	BIT(3)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_VALIDATE	BIT(4)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_MMIO_CONFIG	BIT(5)
+#define KVM_USER_VMGEXIT_TIO_REQ_FLAG_SDTE_VALIDATE	BIT(6)
+			__u8  flags;		/* in */
+			__u8  tdi_status;	/* out */
+			__u64 data_gpa;		/* in */
+			__u64 data_npages;	/* in/out */
+			__u64 req_spa;		/* in */
+			__u64 rsp_spa;		/* in */
+			__u64 gpa;		/* MMIO or vTOM */
+			__s32 fw_err;		/* out */
+		} tio_req;
+
+#define KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_BIND	0
+#define KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_UNBIND	1
+#define KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_RUN	2
+#define KVM_USER_SVM_VMGEXIT_SEV_TIO_OP_STOP	3
+		struct {
+			__u32 guest_rid;	/* in */
+			__u8 op;		/* in: SEV_TIO_OP_ */
+			__u8 reserved[3];
+			__s32 fw_err;		/* out */
+			__s32 reserved2;
+			__u64 fw_tdi_id;	/* out */
+		} tio_op;
+	};
+} __packed;
+
 #define KVM_S390_GET_SKEYS_NONE   1
 #define KVM_S390_SKEYS_MAX        1048576
 
@@ -181,6 +219,7 @@ struct kvm_xen_exit {
 #define KVM_EXIT_MEMORY_FAULT     39
 #define KVM_EXIT_TDX              40
 #define KVM_EXIT_ARM_SEA          41
+#define KVM_EXIT_VMGEXIT          42
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -483,6 +522,7 @@ struct kvm_run {
 			__u64 gva;
 			__u64 gpa;
 		} arm_sea;
+		struct kvm_user_vmgexit vmgexit;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
