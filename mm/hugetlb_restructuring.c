@@ -95,8 +95,16 @@ static void hugetlb_restructuring_freeze_folio(struct folio *folio)
 	while (!folio_ref_freeze(folio, filemap_refcount)) {
 		WARN_ONCE(1, "Spinning on folio=%p refcount=%d", folio,
 			  folio_ref_count(folio));
+		pr_debug_ratelimited("%s: spinning on folio %px mapping %px refcount %d index %ld\n", __func__, folio, folio->mapping, folio_ref_count(folio), folio->index);
+		if (folio->mapping) {
+			unmap_mapping_pages(folio->mapping, folio->index, folio_nr_pages(folio), false);
+		}
 		cond_resched();
 	}
+#if 0
+	if (!folio_ref_freeze(folio, filemap_refcount))
+		return -EBUSY;
+#endif
 }
 
 static void hugetlb_restructuring_unfreeze_folio(struct folio *folio)
