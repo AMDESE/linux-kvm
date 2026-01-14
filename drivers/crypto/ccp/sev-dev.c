@@ -229,6 +229,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_GUEST_STATUS:		return sizeof(struct sev_data_guest_status);
 	case SEV_CMD_DBG_DECRYPT:		return sizeof(struct sev_data_dbg);
 	case SEV_CMD_DBG_ENCRYPT:		return sizeof(struct sev_data_dbg);
+	case SEV_CMD_SNP_PAGE_SET_STATE:        return sizeof(struct sev_data_snp_page_set_state);
 	case SEV_CMD_SEND_START:		return sizeof(struct sev_data_send_start);
 	case SEV_CMD_SEND_UPDATE_DATA:		return sizeof(struct sev_data_send_update_data);
 	case SEV_CMD_SEND_UPDATE_VMSA:		return sizeof(struct sev_data_send_update_vmsa);
@@ -518,6 +519,80 @@ static void *sev_fw_alloc(unsigned long len)
 
 	return page_address(page);
 }
+
+/*
+ * Transition pages to HV-Fixed state using RMPUPDATE and
+ * SEV_CMD_SNP_PAGE_SET_STATE
+ */
+int rmp_make_hv_fixed(u64 pfn, unsigned int pages)
+{
+	struct sev_data_range *snp_range;
+	struct sev_data_range_list *snp_range_list;
+	struct sev_data_snp_page_set_state data = { 0 };
+	int i, error, ret;
+	struct sev_device *sev = psp_master ? psp_master->sev_data : NULL;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP) || !sev || !sev->snp_initialized)
+		return -ENODEV; // FIXME: Make sure other paths are not returning this
+
+	/*
+	 * The SEV_CMD_SNP_PAGE_SET_STATE command only operates on
+	 * 2MB-aligned range base addresses.
+	 */
+	WARN_ON((pfn << PAGE_SHIFT) & ~PMD_MASK);
+	pr_debug("%s: pfn 0x%llx to HV_Fixed\n", __func__, pfn);
+
+	/*
+	 * To make pages HV-Fixed, SEV firmware requires that the pages
+	 * in the RANGES structure are first put into the firmware state
+	 */
+	for (i = 0; i < pages; i++) {
+		ret = rmp_make_private(pfn + i, 0ULL, PG_LEVEL_4K,
+				0, true /* immutable */);
+		if (ret)
+			goto err_out;
+	}
+
+	/*
+	 * SEV returns invalid address if not a PAGE_SIZE allocation
+	 */
+	snp_range_list = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!snp_range_list) {
+		ret = -ENOMEM;
+		goto err_out;
+	}
+
+	snp_range_list->num_elements = 1;
+	snp_range = snp_range_list->ranges;
+
+	snp_range->base = pfn << PAGE_SHIFT;
+	snp_range->page_count = pages;
+
+	/* point to the list of ranges */
+	data.list_paddr = __psp_pa(snp_range_list);
+	data.length = sizeof(data);
+
+	ret = sev_do_cmd(SEV_CMD_SNP_PAGE_SET_STATE, &data, &error);
+	if (ret) {
+		pr_err("SEV_CMD_SNP_PAGE_SET_STATE failed: pfn %llx pages %d ret %d err %x\n",
+			pfn, pages, ret, error);
+		dump_stack();
+		ret = -EFAULT;
+		goto err_out;
+	}
+
+err_out:
+	kfree(snp_range_list);
+	if (ret) {
+		/* not all pages may have made it to the firmware state */
+		pages = i - 1;
+		for (i = 0; i < pages; i++)
+			rmp_make_shared(pfn + i, PG_LEVEL_4K);
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(rmp_make_hv_fixed);
 
 /**
  * struct cmd_buf_desc - descriptors for managing legacy SEV command address

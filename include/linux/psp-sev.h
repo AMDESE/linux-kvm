@@ -728,6 +728,18 @@ struct sev_data_snp_guest_status {
 } __packed;
 
 /**
+ * struct sev_data_snp_page_set_state - SNP_PAGE_SET_STATE command params
+ *
+ * @length: length of this command buffer read by the PSP in bytes
+ * @list_paddr: system physical address of range list
+ */
+struct sev_data_snp_page_set_state {
+	u32 length;			/* In */
+	u32 rsvd;
+	u64 list_paddr;			/* In */
+} __packed;
+
+/**
  * struct sev_data_snp_page_reclaim - SNP_PAGE_RECLAIM command params
  *
  * @paddr: system physical address of page to be claimed. The 0th bit in the
@@ -1042,6 +1054,7 @@ void *psp_copy_user_blob(u64 uaddr, u32 len);
 void *snp_alloc_firmware_page(gfp_t mask);
 int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked);
 void snp_free_firmware_page(void *addr);
+int rmp_make_hv_fixed(u64 pfn, unsigned int pages);
 void sev_platform_shutdown(void);
 bool sev_is_snp_ciphertext_hiding_supported(void);
 u64 sev_get_snp_policy_bits(void);
@@ -1087,6 +1100,11 @@ static inline void snp_free_firmware_page(void *addr) { }
 static inline void sev_platform_shutdown(void) { }
 
 static inline bool sev_is_snp_ciphertext_hiding_supported(void) { return false; }
+
+static inline int rmp_make_hv_fixed(u64 pfn, unsigned int pages)
+{
+	return -ENODEV;
+}
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
 
