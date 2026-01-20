@@ -2669,4 +2669,8 @@ static inline int kvm_vfio_dmabuf_get_pfn(struct kvm *kvm,
 }
 #endif
 
+unsigned long kvm_get_vm_memory_attributes(struct kvm *kvm, gfn_t gfn);
+int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
+					   struct kvm_memory_attributes2 *attrs);
+
 #endif

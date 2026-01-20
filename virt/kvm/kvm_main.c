@@ -2478,7 +2478,7 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 
 #ifdef CONFIG_KVM_MEMORY_ATTRIBUTES
 #ifdef CONFIG_KVM_VM_MEMORY_ATTRIBUTES
-static unsigned long kvm_get_vm_memory_attributes(struct kvm *kvm, gfn_t gfn)
+unsigned long kvm_get_vm_memory_attributes(struct kvm *kvm, gfn_t gfn)
 {
 	return xa_to_value(xa_load(&kvm->mem_attr_array, gfn));
 }
@@ -2652,7 +2652,8 @@ out_unlock:
 
 	return r;
 }
-static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
+
+int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes2 *attrs)
 {
 	gfn_t start, end;
@@ -2679,6 +2680,8 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 
 	return kvm_vm_set_mem_attributes(kvm, start, end, attrs->attributes);
 }
+EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_vm_ioctl_set_mem_attributes);
+
 #else  /* CONFIG_KVM_VM_MEMORY_ATTRIBUTES */
 static unsigned long kvm_get_vm_memory_attributes(struct kvm *kvm, gfn_t gfn)
 {

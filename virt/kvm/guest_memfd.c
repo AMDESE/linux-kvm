@@ -761,7 +761,7 @@ unsigned long kvm_gmem_get_memory_attributes(struct kvm *kvm, gfn_t gfn)
 
 	CLASS(gmem_get_file, file)(slot);
 	if (!file)
-		return false;
+		return kvm_get_vm_memory_attributes(kvm, gfn);
 
 	/*
 	 * Don't take the filemap invalidation lock, as temporarily acquiring
