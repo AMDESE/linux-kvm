@@ -189,6 +189,62 @@ phys_addr_t DOMAIN_NS(iova_to_phys)(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL_NS_GPL(DOMAIN_NS(iova_to_phys), "GENERIC_PT_IOMMU");
 
+struct __do_for_each_walk_s {
+	struct iommu_domain *domain;
+	iommu_domain_ops_for_each_fn fn;
+	void *arg;
+};
+
+static __always_inline int __do_for_each(struct pt_range *range, void *arg,
+					     unsigned int level,
+					     struct pt_table_p *table,
+					     pt_level_fn_t descend_fn)
+{
+	struct pt_state pts = pt_init(range, level, table);
+	struct __do_for_each_walk_s *s = arg;
+	int ret;
+	u64 oa;
+
+	for_each_pt_level_entry(&pts) {
+		if (pts.type == PT_ENTRY_TABLE) {
+			oa = pt_entry_oa(&pts);
+			ret = s->fn(s->domain, s->arg, pts.range->va, oa,
+				    1UL << pt_entry_oa_lg2sz(&pts), false,
+				    pt_cur_table(&pts, u64) + pts.index);
+			if (ret)
+				return ret;
+			ret = pt_descend(&pts, arg, descend_fn);
+		} else if (pts.type == PT_ENTRY_OA) {
+			oa = pt_entry_oa(&pts);
+			ret = s->fn(s->domain, s->arg, pts.range->va, oa,
+				    1UL << pt_entry_oa_lg2sz(&pts), true,
+				    pt_cur_table(&pts, u64) + pts.index);
+		}
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+PT_MAKE_LEVELS(__for_each, __do_for_each);
+
+int DOMAIN_NS(for_each)(struct iommu_domain *domain, iommu_domain_ops_for_each_fn fn, void *arg)
+{
+	struct pt_iommu *iommu_table =
+		container_of(domain, struct pt_iommu, domain);
+	struct pt_range range = {};
+	struct __do_for_each_walk_s s = { .domain = domain, .fn = fn, .arg = arg };
+	int ret;
+
+	ret = make_range(common_from_iommu(iommu_table), &range, domain->geometry.aperture_start,
+			128 * SZ_1T);
+	if (ret)
+		return ret;
+
+	return pt_walk_range(&range, __for_each, &s);
+}
+EXPORT_SYMBOL_NS_GPL(DOMAIN_NS(for_each), "GENERIC_PT_IOMMU");
+
 struct pt_iommu_dirty_args {
 	struct iommu_dirty_bitmap *dirty;
 	unsigned int flags;

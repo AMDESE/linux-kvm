@@ -750,6 +750,10 @@ struct iommu_ops {
  * @set_pgtable_quirks: Set io page table quirks (IO_PGTABLE_QUIRK_*)
  * @free: Release the domain after use.
  */
+typedef int (*iommu_domain_ops_for_each_fn)(struct iommu_domain *domain, void *arg,
+					    dma_addr_t iova, u64 pte, size_t size, bool leaf,
+					    u64 *ppte);
+
 struct iommu_domain_ops {
 	int (*attach_dev)(struct iommu_domain *domain, struct device *dev,
 			  struct iommu_domain *old);
@@ -779,6 +783,7 @@ struct iommu_domain_ops {
 				  unsigned long quirks);
 
 	void (*free)(struct iommu_domain *domain);
+	int (*for_each)(struct iommu_domain *domain, iommu_domain_ops_for_each_fn fn, void *arg);
 };
 
 /**
@@ -926,6 +931,7 @@ extern ssize_t iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
 			    struct scatterlist *sg, unsigned int nents,
 			    int prot, gfp_t gfp);
 extern phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova);
+extern int iommu_for_each(struct iommu_domain *domain, iommu_domain_ops_for_each_fn fn, void *arg);
 extern void iommu_set_fault_handler(struct iommu_domain *domain,
 			iommu_fault_handler_t handler, void *token);
 

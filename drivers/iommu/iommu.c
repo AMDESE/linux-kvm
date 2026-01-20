@@ -2444,6 +2444,12 @@ phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova)
 }
 EXPORT_SYMBOL_GPL(iommu_iova_to_phys);
 
+int iommu_for_each(struct iommu_domain *domain, iommu_domain_ops_for_each_fn fn, void *arg)
+{
+	return domain->ops->for_each(domain, fn, arg);
+}
+EXPORT_SYMBOL_GPL(iommu_for_each);
+
 static size_t iommu_pgsize(struct iommu_domain *domain, unsigned long iova,
 			   phys_addr_t paddr, size_t size, size_t *count)
 {
