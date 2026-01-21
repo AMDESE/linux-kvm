@@ -96,7 +96,8 @@ static void nested_svm_init_mmu_context(struct kvm_vcpu *vcpu)
 	 */
 	kvm_init_shadow_npt_mmu(vcpu, X86_CR0_PG, svm->vmcb01.ptr->save.cr4,
 				svm->vmcb01.ptr->save.efer,
-				svm->nested.ctl.nested_cr3);
+				svm->nested.ctl.nested_cr3, nested_gmet_enabled(svm));
+	vcpu->arch.mmu->root_role.has_gmet = nested_gmet_enabled(svm);
 	vcpu->arch.mmu->get_guest_pgd     = nested_svm_get_tdp_cr3;
 	vcpu->arch.mmu->get_pdptr         = nested_svm_get_tdp_pdptr;
 	vcpu->arch.mmu->inject_page_fault = nested_svm_inject_npf_exit;
@@ -749,6 +750,11 @@ static void nested_vmcb02_prepare_control(struct vcpu_svm *svm,
 
 	/* Copied from vmcb01.  msrpm_base can be overwritten later.  */
 	vmcb02->control.nested_ctl = vmcb01->control.nested_ctl;
+	vmcb02->control.nested_ctl &= ~SVM_NESTED_CTL_GMET_ENABLE;
+	if (gmet && nested_npt_enabled(svm) &&
+	    guest_cpu_cap_has(&svm->vcpu, X86_FEATURE_GMET))
+		vmcb02->control.nested_ctl |= SVM_NESTED_CTL_GMET_ENABLE;
+
 	vmcb02->control.iopm_base_pa = vmcb01->control.iopm_base_pa;
 	vmcb02->control.msrpm_base_pa = vmcb01->control.msrpm_base_pa;
 

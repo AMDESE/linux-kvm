@@ -151,6 +151,10 @@ module_param(vls, int, 0444);
 int vgif = true;
 module_param(vgif, int, 0444);
 
+/* enable/disable Guest Mode Execute Trap */
+int gmet = true;
+module_param(gmet, int, 0444);
+
 /* enable/disable LBR virtualization */
 int lbrv = true;
 module_param(lbrv, int, 0444);
@@ -5229,6 +5233,9 @@ static __init void svm_set_cpu_caps(void)
 		if (vnmi)
 			kvm_cpu_cap_set(X86_FEATURE_VNMI);
 
+		if (gmet)
+			kvm_cpu_cap_set(X86_FEATURE_GMET);
+
 		/* Nested VM can receive #VMEXIT instead of triggering #GP */
 		kvm_cpu_cap_set(X86_FEATURE_SVME_ADDR_CHK);
 	}
@@ -5408,6 +5415,13 @@ static __init int svm_hardware_setup(void)
 			vgif = false;
 		else
 			pr_info("Virtual GIF supported\n");
+	}
+
+	if (gmet) {
+		if (!boot_cpu_has(X86_FEATURE_GMET))
+			gmet = false;
+		else
+			pr_info("Guest Mode Execute Trap supported\n");
 	}
 
 	vnmi = vgif && vnmi && boot_cpu_has(X86_FEATURE_VNMI);

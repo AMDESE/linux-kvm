@@ -47,6 +47,7 @@ static inline struct page *__sme_pa_to_page(unsigned long pa)
 extern bool npt_enabled;
 extern int nrips;
 extern int vgif;
+extern int gmet;
 extern bool intercept_smi;
 extern bool vnmi;
 extern int lbrv;
@@ -554,6 +555,12 @@ static inline bool gif_set(struct vcpu_svm *svm)
 static inline bool nested_npt_enabled(struct vcpu_svm *svm)
 {
 	return svm->nested.ctl.nested_ctl & SVM_NESTED_CTL_NP_ENABLE;
+}
+
+static inline bool nested_gmet_enabled(struct vcpu_svm *svm)
+{
+	return nested_npt_enabled(svm) &&
+	       (svm->nested.ctl.nested_ctl & SVM_NESTED_CTL_GMET_ENABLE);
 }
 
 static inline bool nested_vnmi_enabled(struct vcpu_svm *svm)

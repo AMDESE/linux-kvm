@@ -355,15 +355,11 @@ static inline bool is_executable_pte(u64 spte, bool is_user_access,
 	if (!mmu_has_gec(vcpu))
 		return (spte & shadow_x_mask) == shadow_x_mask;
 
-	/*
-	 * Warn against AMD systems (where shadow_x_mask == 0) reaching
-	 * this point, so this will always evaluate to true for user-mode
-	 * pages, but until GMET is implemented, this should be a no-op.
-	 */
-	if (WARN_ON_ONCE(!shadow_x_mask))
-		return is_user_access || !(spte & shadow_user_mask);
+	if (shadow_ux_mask)
+		return spte & (is_user_access ? shadow_ux_mask : shadow_x_mask);
 
-	return spte & (is_user_access ? shadow_ux_mask : shadow_x_mask);
+	/* AMD GMET: the user bit distinguishes UX from KX permission. */
+	return is_user_access ?  !!(spte & shadow_user_mask) : !(spte & shadow_user_mask);
 }
 
 static inline bool is_executable_pte_fault(u64 spte,
@@ -377,13 +373,6 @@ static inline bool is_executable_pte_fault(u64 spte,
 		return (spte & shadow_x_mask) == shadow_x_mask;
 
 	/*
-	 * Warn against AMD systems (where shadow_x_mask == 0) reaching
-	 * this point, so this will always evaluate to true for user-mode
-	 * pages, but until GMET is implemented, this should be a no-op.
-	 */
-	if (WARN_ON_ONCE(!shadow_x_mask))
-		return fault->user || !(spte & shadow_user_mask);
-	/*
 	 * For TDP MMU, fault->user indicates a read access, not CPL.
 	 * For execute faults, we don't know the CPL here, so we can't
 	 * definitively check permissions. Being optimistic and checking
@@ -396,7 +385,10 @@ static inline bool is_executable_pte_fault(u64 spte,
 	if (fault->is_tdp)
 		return false;
 
-	return spte & (fault->user ? shadow_ux_mask : shadow_x_mask);
+	if (shadow_ux_mask)
+		return spte & (fault->user ? shadow_ux_mask : shadow_x_mask);
+
+	return fault->user ? !!(spte & shadow_user_mask) : !(spte & shadow_user_mask);
 }
 
 static inline kvm_pfn_t spte_to_pfn(u64 pte)

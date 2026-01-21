@@ -86,7 +86,7 @@ void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only,
 
 void kvm_init_mmu(struct kvm_vcpu *vcpu);
 void kvm_init_shadow_npt_mmu(struct kvm_vcpu *vcpu, unsigned long cr0,
-			     unsigned long cr4, u64 efer, gpa_t nested_cr3);
+			     unsigned long cr4, u64 efer, gpa_t nested_cr3, bool has_gmet);
 void kvm_init_shadow_ept_mmu(struct kvm_vcpu *vcpu, bool execonly,
 			     int huge_page_level, bool accessed_dirty,
 			     gpa_t new_eptp);
@@ -228,12 +228,24 @@ static inline u8 permission_fault(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 	 */
 	u64 implicit_access = access & PFERR_IMPLICIT_ACCESS;
 	bool not_smap = ((rflags & X86_EFLAGS_AC) | implicit_access) == X86_EFLAGS_AC;
-	int index = (pfec | (not_smap ? PFERR_RSVD_MASK : 0)) >> 1;
+	bool us_bit = pte_access & PT_USER_MASK;
 	u32 errcode = PFERR_PRESENT_MASK;
 	bool fault;
+	int index;
+
+	if (mmu_has_gmet(vcpu) && (pfec & PFERR_USER_MASK) && !us_bit) {
+		/*
+		 * Clear the USER bit for pages with NPT U/S=0:
+		 * - Supervisor access (CPL < 3): As per hardware erratum the CPU
+		 *   incorrectly set the USER bit in the error code.
+		 * - User access (CPL 3): GMET allows access to pages with U/S=0.
+		 */
+		pfec &= ~PFERR_USER_MASK;
+	}
+
+	index = ((pfec & 0x1F) | (not_smap ? PFERR_RSVD_MASK : 0)) >> 1;
 
 	kvm_mmu_refresh_passthrough_bits(vcpu, mmu);
-
 	if (mmu_has_mbec(vcpu))
 		fault = mbec_permission_fault(vcpu, pte_access, pfec);
 	else

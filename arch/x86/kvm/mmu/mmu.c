@@ -5457,6 +5457,15 @@ static void update_permission_bitmask(struct kvm_mmu *mmu, bool ept)
 	bool cr0_wp = is_cr0_wp(mmu);
 	bool efer_nx = is_efer_nx(mmu);
 
+	/*
+	 * GMET (Guest Mode Execute Trap): only supervisor (CPL 0/1/2) execution
+	 * from user pages (nPT U/S=1) causes #NPF. User (CPL 3) may execute
+	 * from supervisor pages. So enable SMEP-like behavior (fault supervisor
+	 * fetch from user page) only; user fetch from supervisor page is allowed.
+	 */
+	if (mmu->root_role.has_mbec && !ept)
+		cr4_smep = true;
+
 	for (byte = 0; byte < ARRAY_SIZE(mmu->permissions); ++byte) {
 		unsigned pfec = byte << 1;
 
@@ -5851,7 +5860,7 @@ static void kvm_init_shadow_mmu(struct kvm_vcpu *vcpu,
 }
 
 void kvm_init_shadow_npt_mmu(struct kvm_vcpu *vcpu, unsigned long cr0,
-			     unsigned long cr4, u64 efer, gpa_t nested_cr3)
+			     unsigned long cr4, u64 efer, gpa_t nested_cr3, bool has_gmet)
 {
 	struct kvm_mmu *context = &vcpu->arch.guest_mmu;
 	struct kvm_mmu_role_regs regs = {
@@ -5867,6 +5876,8 @@ void kvm_init_shadow_npt_mmu(struct kvm_vcpu *vcpu, unsigned long cr0,
 
 	root_role = cpu_role.base;
 	root_role.level = kvm_mmu_get_tdp_level(vcpu);
+	root_role.has_gmet = has_gmet;
+
 	if (root_role.level == PT64_ROOT_5LEVEL &&
 	    cpu_role.base.level == PT64_ROOT_4LEVEL)
 		root_role.passthrough = 1;
