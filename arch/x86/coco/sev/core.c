@@ -44,6 +44,7 @@
 #include <asm/cpuid/api.h>
 #include <asm/cmdline.h>
 #include <asm/msr.h>
+#include <asm/archrandom.h>
 
 #include "internal.h"
 
@@ -103,6 +104,36 @@ static unsigned long snp_tsc_freq_khz __ro_after_init;
 
 DEFINE_PER_CPU(struct sev_es_runtime_data*, runtime_data);
 DEFINE_PER_CPU(struct sev_es_save_area *, sev_vmsa);
+DEFINE_PER_CPU(u8 *, iommu_tlb_flush_ghcb_page);
+static atomic_t sev_tio_devices_num;
+
+static int alloc_iommu_tlb_flush_ghcb_pages(void)
+{
+	unsigned int cpu;
+	struct page *pg;
+	void *p;
+
+	/*
+	 * Allocate per CPU pages while encrypted DMA is not happening yet
+	 * and smashing is cheap.
+	 */
+	for_each_possible_cpu(cpu) {
+		if (per_cpu(iommu_tlb_flush_ghcb_page, cpu))
+			continue;
+
+		pg = alloc_pages_node(cpu_to_node(cpu), GFP_KERNEL, 0);
+		if (!pg)
+			return -ENOMEM;
+
+		p = page_to_virt(pg);
+		/* Trigger psmash in the host os now to avoid psmash race later */
+		snp_set_memory_shared((unsigned long)p, 1);
+		snp_set_memory_private((unsigned long)p, 1);
+		per_cpu(iommu_tlb_flush_ghcb_page, cpu) = p;
+	}
+
+	return 0;
+}
 
 int sev_tio_op(u32 guest_rid, unsigned int op, u64 *fw_err, u64 *tdi_id)
 {
@@ -110,6 +141,24 @@ int sev_tio_op(u32 guest_rid, unsigned int op, u64 *fw_err, u64 *tdi_id)
 	struct es_em_ctxt ctxt;
 	struct ghcb *ghcb;
 	int ret;
+
+	if (!(sev_hv_features & GHCB_HV_FT_SNP_SEV_TIO))
+		return -EPERM;
+
+	if (op == SVM_VMGEXIT_SEV_TIO_OP_RUN || op == SVM_VMGEXIT_SEV_TIO_OP_STOP) {
+		if (!(sev_hv_features & GHCB_HV_FT_SNP_IOMMU_TLB_FLUSH))
+			return -EPERM;
+
+		if (op == SVM_VMGEXIT_SEV_TIO_OP_RUN) {
+			if (atomic_inc_return(&sev_tio_devices_num) == 1) {
+				ret = alloc_iommu_tlb_flush_ghcb_pages();
+				if (ret)
+					return ret;
+			}
+		} else if (atomic_dec_return(&sev_tio_devices_num) == 0) {
+			/* Do cleanup or leave it like this? */
+		}
+	}
 
 	/* __sev_get_ghcb() needs IRQs disabled because it uses per-CPU GHCB. */
 	guard(irqsave)();
@@ -347,6 +396,42 @@ out:
 	return ret;
 }
 
+static int ghcb_flush_iommu_tlb(struct ghcb *ghcb)
+{
+	/* AES encrypts with 16 byte blocks */
+	unsigned long s1[BITS_TO_LONGS(128)], s2[BITS_TO_LONGS(128)];
+	void *p = this_cpu_read(iommu_tlb_flush_ghcb_page), *p2;
+	struct es_em_ctxt ctxt;
+	int ret;
+
+	if (!p)
+		return -ENOMEM;
+
+	/* Keep patterns apart far enough to not share the same cache line */
+	p2 = (u8 *) p + 2048;
+
+	vc_ghcb_invalidate(ghcb);
+
+	BUILD_BUG_ON(ARRAY_SIZE(s1) != 2);
+	if (!rdrand_long(s1) || !rdrand_long(s1 + 1) ||
+	    !rdrand_long(s2) || !rdrand_long(s2 + 1))
+		return -EFAULT;
+
+	memcpy(p, s1, sizeof(s1));
+	memcpy(p2, s2, sizeof(s2));
+
+	pvalidate((unsigned long) p, RMP_PG_SIZE_4K, false);
+	ret = sev_es_ghcb_hv_call(ghcb, &ctxt, SVM_VMGEXIT_IOMMU_TLB_FLUSH, __pa(p), 0);
+	pvalidate((unsigned long) p, RMP_PG_SIZE_4K, true);
+
+	/* Ensure that the host change is visible */
+	smp_mb();
+
+	if (!memcmp(p, s1, sizeof(s1)) || memcmp(p2, s2, sizeof(s2)))
+		return -EFAULT;
+
+	return 0;
+}
 static unsigned long __set_pages_state(struct snp_psc_desc *data, unsigned long vaddr,
 				       unsigned long vaddr_end, int op)
 {
@@ -403,6 +488,13 @@ static unsigned long __set_pages_state(struct snp_psc_desc *data, unsigned long 
 	/* Invoke the hypervisor to perform the page state changes */
 	if (!ghcb || vmgexit_psc(ghcb, data))
 		sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_PSC);
+
+	if (atomic_read(&sev_tio_devices_num)) {
+		int ret = ghcb_flush_iommu_tlb(ghcb);
+
+		if (ret)
+			sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_IOMMUTLB_FLUSH);
+	}
 
 	__sev_put_ghcb(&state);
 

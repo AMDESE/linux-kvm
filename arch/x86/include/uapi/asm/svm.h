@@ -160,6 +160,8 @@
 #define SVM_VMGEXIT_SEV_TIO_OP_UNBIND	1
 #define SVM_VMGEXIT_SEV_TIO_OP_RUN	2
 #define SVM_VMGEXIT_SEV_TIO_OP_STOP	3
+#define SVM_VMGEXIT_IOMMU_TLB_FLUSH		0x80000022ull
+#define SVM_VMGEXIT_IOMMU_TLB_FLUSH_NO_ACTION	1
 #define SVM_VMGEXIT_HV_FEATURES			0x8000fffdull
 #define SVM_VMGEXIT_TERM_REQUEST		0x8000fffeull
 #define SVM_VMGEXIT_TERM_REASON(reason_set, reason_code)	\
@@ -285,6 +287,7 @@
 	{ SVM_VMGEXIT_AP_CREATION,	"vmgexit_ap_creation" }, \
 	{ SVM_VMGEXIT_SEV_TIO_GR,	"vmgexit_sev_tio_guest_request" }, \
 	{ SVM_VMGEXIT_SEV_TIO_OP,	"vmgexit_sev_tio_op" }, \
+	{ SVM_VMGEXIT_IOMMU_TLB_FLUSH, "vmgexit_sev_tio_iommu_tlb_flush" }, \
 	{ SVM_VMGEXIT_HV_FEATURES,	"vmgexit_hypervisor_feature" }, \
 	{ SVM_EXIT_ERR,         "invalid_guest_state" }
 
