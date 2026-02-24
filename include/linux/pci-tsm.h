@@ -8,6 +8,7 @@
 struct pci_tsm;
 struct tsm_dev;
 struct kvm;
+struct tsm_tdi_status;
 enum pci_tsm_req_scope;
 
 /* Data object for measurements/certificates/attestationreport */
@@ -90,6 +91,7 @@ struct pci_tsm_ops {
 					struct pci_dev *pdev);
 		void (*unlock)(struct pci_tsm *tsm);
 		int (*accept)(struct pci_dev *pdev);
+		int (*status)(struct pci_dev *pdev, struct tsm_tdi_status *ts);
 	);
 };
 
@@ -131,6 +133,7 @@ struct pci_tdi {
  * to a TSM instance or "locked" to a different TSM.
  */
 struct pci_tsm {
+	struct mutex lock2;
 	struct pci_dev *pdev;
 	struct pci_dev *dsm_dev;
 	struct tsm_dev *tsm_dev;

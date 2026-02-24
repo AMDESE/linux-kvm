@@ -394,6 +394,8 @@ int pci_tsm_bind(struct pci_dev *pdev, struct kvm *kvm, u32 tdi_id)
 
 	pdev->tsm->tdi = tdi;
 
+	sysfs_update_group(&pdev->dev.kobj, &pci_tsm_attr_group);
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pci_tsm_bind);
@@ -808,6 +810,76 @@ static ssize_t unlock_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_WO(unlock);
 
+static ssize_t bin_show(char *data, ssize_t len, char *buf, ssize_t size)
+{
+	ssize_t n;
+
+	if (!data || !len)
+		return 0;
+
+	n = min(size, len);
+	memcpy(buf, data, n);
+	memset(buf + n, 0, size - n);
+	return n;
+}
+
+static ssize_t blob_show(struct tsm_blob *b, char *buf, ssize_t size)
+{
+	if (!b)
+		return 0;
+
+	return bin_show(b->data, b->len, buf, size);
+}
+
+static ssize_t tdi_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	const struct pci_tsm_ops *ops;
+	struct tsm_tdi_status ts = {};
+	int rc;
+
+	if (!pdev->tsm)
+		return sysfs_emit(buf, "\n");
+
+	ACQUIRE(rwsem_write_kill, lock)(&pci_tsm_rwsem);
+	if ((rc = ACQUIRE_ERR(rwsem_write_kill, &lock)))
+		return rc;
+
+	ops = pdev->tsm->tsm_dev->pci_ops;
+	if (ops->status) /* the guest */
+		rc = ops->status(pdev, &ts);
+	else
+		rc = -ENXIO;
+	if (rc)
+		return rc;
+
+	return bin_show((char *)&ts, sizeof(ts), buf, PAGE_SIZE);
+}
+static DEVICE_ATTR_RO(tdi_status);
+
+static ssize_t report_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct pci_tsm *tsm;
+	int rc;
+
+	if (!pdev->tsm)
+		return sysfs_emit(buf, "\n");
+
+	ACQUIRE(rwsem_read_intr, lock)(&pci_tsm_rwsem);
+	if ((rc = ACQUIRE_ERR(rwsem_read_intr, &lock)))
+		return rc;
+
+	tsm = pdev->tsm;
+	if (!tsm)
+		return sysfs_emit(buf, "\n");
+
+	guard(mutex)(&tsm->lock2);
+
+	return blob_show(tsm->report, buf, PAGE_SIZE);
+}
+static DEVICE_ATTR_RO(report);
+
 /* The 'authenticated' attribute is exclusive to the presence of a 'link' TSM */
 static bool pci_tsm_link_group_visible(struct kobject *kobj)
 {
@@ -832,6 +904,13 @@ static bool pci_tsm_link_group_visible(struct kobject *kobj)
 	return false;
 }
 DEFINE_SIMPLE_SYSFS_GROUP_VISIBLE(pci_tsm_link);
+
+static bool pci_tsm_vf_group_visible(struct kobject *kobj)
+{
+	struct pci_dev *pdev = to_pci_dev(kobj_to_dev(kobj));
+
+	return pci_tsm_link_count && has_tee(pdev);
+}
 
 static bool pci_tsm_devsec_group_visible(struct kobject *kobj)
 {
@@ -865,6 +944,7 @@ static umode_t pci_tsm_attr_visible(struct kobject *kobj,
 		}
 
 		if (attr == &dev_attr_connect.attr ||
+		    attr == &dev_attr_report.attr ||
 		    attr == &dev_attr_disconnect.attr) {
 			if (is_pci_tsm_pf0(pdev))
 				return attr->mode;
@@ -874,7 +954,8 @@ static umode_t pci_tsm_attr_visible(struct kobject *kobj,
 	if (pci_tsm_devsec_group_visible(kobj)) {
 		if (attr == &dev_attr_accept.attr ||
 		    attr == &dev_attr_lock.attr ||
-		    attr == &dev_attr_unlock.attr)
+		    attr == &dev_attr_unlock.attr ||
+		    attr == &dev_attr_tdi_status.attr)
 			return attr->mode;
 	}
 
@@ -884,6 +965,7 @@ static umode_t pci_tsm_attr_visible(struct kobject *kobj,
 static bool pci_tsm_group_visible(struct kobject *kobj)
 {
 	return pci_tsm_link_group_visible(kobj) ||
+	       pci_tsm_vf_group_visible(kobj) ||
 	       pci_tsm_devsec_group_visible(kobj);
 }
 DEFINE_SYSFS_GROUP_VISIBLE(pci_tsm);
@@ -896,6 +978,7 @@ static struct attribute *pci_tsm_attrs[] = {
 	&dev_attr_accept.attr,
 	&dev_attr_lock.attr,
 	&dev_attr_unlock.attr,
+	&dev_attr_report.attr,
 	NULL
 };
 
@@ -1019,6 +1102,7 @@ int pci_tsm_link_constructor(struct pci_dev *pdev, struct pci_tsm *tsm,
 	}
 	tsm->pdev = pdev;
 	tsm->tsm_dev = tsm_dev;
+	mutex_init(&tsm->lock2);
 
 	return 0;
 }
@@ -1042,6 +1126,7 @@ int pci_tsm_devsec_constructor(struct pci_dev *pdev, struct pci_tsm_devsec *tsm,
 	pci_tsm->tdi = NULL;
 	pci_tsm->pdev = pdev;
 	pci_tsm->tsm_dev = tsm_dev;
+	mutex_init(&pci_tsm->lock2);
 
 	return 0;
 }
@@ -1139,6 +1224,9 @@ static void __pci_tsm_destroy(struct pci_dev *pdev, struct tsm_dev *tsm_dev)
 	 */
 	if (is_link_tsm(tsm_dev) && is_pci_tsm_pf0(pdev) && !pci_tsm_link_count)
 		link_sysfs_disable(pdev);
+
+	if (is_link_tsm(tsm_dev) && !is_pci_tsm_pf0(pdev))
+		sysfs_update_group(&pdev->dev.kobj, &pci_tsm_attr_group);
 
 	if (is_devsec_tsm(tsm_dev) && !pci_tsm_devsec_count)
 		sysfs_update_group(&pdev->dev.kobj, &pci_tsm_attr_group);

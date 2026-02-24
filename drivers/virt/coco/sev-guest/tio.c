@@ -590,6 +590,14 @@ static int tio_tdi_sdte_write(struct pci_dev *pdev, struct snp_guest_dev *snp_de
 	return 0;
 }
 
+static int sev_guest_status(struct pci_dev *pdev, struct tsm_tdi_status *ts)
+{
+	struct tio_guest_tdi *gtdi = pdev_to_tdi(pdev);
+	struct pci_tsm *tsm = pdev->tsm;
+
+	return tio_tdi_status(pdev, gtdi->snp_dev, ts, &tsm->report);
+}
+
 static struct pci_tsm *sev_guest_lock(struct tsm_dev *tsmdev, struct pci_dev *pdev)
 {
 	struct tio_guest_tdi *gtdi __free(kfree) = kzalloc(sizeof(*gtdi), GFP_KERNEL);
@@ -695,6 +703,7 @@ struct pci_tsm_ops sev_guest_tsm_ops = {
 	.lock = sev_guest_lock,
 	.unlock = sev_guest_unlock,
 	.accept = sev_guest_accept,
+	.status = sev_guest_status,
 };
 
 void sev_guest_tsm_set_ops(bool set, struct snp_guest_dev *snp_dev)
