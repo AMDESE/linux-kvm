@@ -1273,6 +1273,7 @@
 #define  PCI_IDE_CAP_LINK_TC_NUM	__GENMASK(15, 13) /* Link IDE TCs */
 #define  PCI_IDE_CAP_SEL_NUM		__GENMASK(23, 16) /* Supported Selective IDE Streams */
 #define  PCI_IDE_CAP_TEE_LIMITED	0x1000000 /* TEE-Limited Stream Supported */
+#define  PCI_IDE_CAP_XT_SUP		BIT_ULL(24) /* XT Supported */
 #define PCI_IDE_CTL			0x08
 #define  PCI_IDE_CTL_FLOWTHROUGH_IDE	0x4  /* Flow-Through IDE Stream Enabled */
 
@@ -1281,6 +1282,7 @@
 /* Link IDE Stream block, up to PCI_IDE_CAP_LINK_TC_NUM */
 #define PCI_IDE_LINK_CTL_0		0x00		  /* First Link Control Register Offset in block */
 #define  PCI_IDE_LINK_CTL_EN		0x1		  /* Link IDE Stream Enable */
+#define  PCI_IDE_SEL_CTL_XT		0x2		  /* Link IDE Stream XT Enable */
 #define  PCI_IDE_LINK_CTL_TX_AGGR_NPR	__GENMASK(3, 2)	  /* Tx Aggregation Mode NPR */
 #define  PCI_IDE_LINK_CTL_TX_AGGR_PR	__GENMASK(5, 4)	  /* Tx Aggregation Mode PR */
 #define  PCI_IDE_LINK_CTL_TX_AGGR_CPL	__GENMASK(7, 6)	  /* Tx Aggregation Mode CPL */
@@ -1300,6 +1302,7 @@
 /* Selective IDE Stream Control Register */
 #define  PCI_IDE_SEL_CTL		0x04
 #define   PCI_IDE_SEL_CTL_EN		0x1		  /* Selective IDE Stream Enable */
+#define   PCI_IDE_SEL_CTL_XT		0x2		  /* Selective IDE Stream XT Enable */
 #define   PCI_IDE_SEL_CTL_TX_AGGR_NPR	__GENMASK(3, 2)	  /* Tx Aggregation Mode NPR */
 #define   PCI_IDE_SEL_CTL_TX_AGGR_PR	__GENMASK(5, 4)   /* Tx Aggregation Mode PR */
 #define   PCI_IDE_SEL_CTL_TX_AGGR_CPL	__GENMASK(7, 6)	  /* Tx Aggregation Mode CPL */

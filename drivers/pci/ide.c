@@ -6,12 +6,17 @@
 #define dev_fmt(fmt) "PCI/IDE: " fmt
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
+#include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/pci-ide.h>
 #include <linux/pci_regs.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 #include <linux/tsm.h>
+
+static bool xt_support = true;
+module_param(xt_support, bool, 0444);
+MODULE_PARM_DESC(xt_support, "Enable XT support for IDE streams (default: true)");
 
 #include "pci.h"
 
@@ -517,6 +522,22 @@ struct pci_ide_partner *pci_ide_to_settings(struct pci_dev *pdev, struct pci_ide
 }
 EXPORT_SYMBOL_GPL(pci_ide_to_settings);
 
+static bool ide_xt_supported(struct pci_dev *pdev)
+{
+	u32 val;
+
+	pr_info_once("%s: xt_support module param : %d\n", __func__, xt_support);
+
+	if (!xt_support)
+		return false;
+
+	val = pci_read_config_dword(pdev, pdev->ide_cap + PCI_IDE_CAP, &val);
+	if ((val & PCI_IDE_CAP_XT_SUP))
+		return true;
+
+	return false;
+}
+
 static void set_ide_sel_ctl(struct pci_dev *pdev, struct pci_ide *ide,
 			    struct pci_ide_partner *settings, int pos,
 			    bool enable)
@@ -526,6 +547,12 @@ static void set_ide_sel_ctl(struct pci_dev *pdev, struct pci_ide *ide,
 		  FIELD_PREP(PCI_IDE_SEL_CTL_CFG_EN, pdev->ide_cfg) |
 		  FIELD_PREP(PCI_IDE_SEL_CTL_TEE_LIMITED, pdev->ide_tee_limit) |
 		  FIELD_PREP(PCI_IDE_SEL_CTL_EN, enable);
+
+	if (ide_xt_supported(pdev)) {
+		pr_info("%s: XT support enabled for devid : 0x%x\n",
+			__func__, pci_dev_id(pdev));
+		val |= FIELD_PREP(PCI_IDE_SEL_CTL_XT, 1);
+	}
 
 	pci_write_config_dword(pdev, pos + PCI_IDE_SEL_CTL, val);
 }
