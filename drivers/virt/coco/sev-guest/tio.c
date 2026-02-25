@@ -115,6 +115,8 @@ static void *alloc_shared_pages(size_t sz)
 static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 				  void *req_buf, size_t req_sz, void *resp_buf, u32 resp_sz,
 				  u64 bdfn, enum tsm_tdisp_state *state,
+				  struct tsm_blob **certs, struct tsm_blob **meas,
+				  const char *nonce,
 				  struct tsm_blob **report, u64 *fw_err)
 {
 #define TIO_DATA_PAGES	(SZ_32K >> PAGE_SHIFT)
@@ -128,8 +130,15 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 
 	if (state)
 		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_STATE;
+	if (certs)
+		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_CERTS;
+	if (meas)
+		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_MEAS;
 	if (report)
 		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_REPORT;
+
+	if (meas && nonce)
+		memcpy(pt, nonce, SPDM_MEASUREMENTS_NONCE_LEN);
 
 	rc = handle_tio_guest_request(snp_dev, type, req_buf, req_sz, resp_buf, resp_sz,
 				      pt, &npages, &bdfn, &param, fw_err);
@@ -139,12 +148,22 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 		if (!pt)
 			return -ENOMEM;
 
+		if (meas && nonce)
+			memcpy(pt, nonce, SPDM_MEASUREMENTS_NONCE_LEN);
 		rc = handle_tio_guest_request(snp_dev, type, req_buf, req_sz, resp_buf, resp_sz,
 					      pt, &npages, &bdfn, &param, fw_err);
 	}
 	if (rc)
 		return rc;
 
+	if (meas) {
+		tsm_blob_free(*meas);
+		*meas = NULL;
+	}
+	if (certs) {
+		tsm_blob_free(*certs);
+		*certs = NULL;
+	}
 	if (report) {
 		tsm_blob_free(*report);
 		*report = NULL;
@@ -167,6 +186,10 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 
 		if (guid_equal(&pt[i].guid, &TIO_GUID_REPORT) && report)
 			*report = b;
+		else if (guid_equal(&pt[i].guid, &TIO_GUID_MEASUREMENTS) && meas)
+			*meas = b;
+		else if (guid_equal(&pt[i].guid, &TIO_GUID_CERTIFICATES) && certs)
+			*certs = b;
 	}
 	free_shared_pages(pt, npages);
 
@@ -214,7 +237,9 @@ struct tio_msg_tdi_info_rsp {
 
 /* Passing pci_tsm explicitly as it may not be set in pci_dev just yet */
 static int tio_tdi_status(struct pci_dev *pdev, struct snp_guest_dev *snp_dev,
-			  struct tsm_tdi_status *ts, struct tsm_blob **report)
+			  struct tsm_tdi_status *ts, struct tsm_blob **certs,
+			  struct tsm_blob **meas, const char *nonce,
+			  struct tsm_blob **report)
 {
 	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
 	struct snp_msg_desc *mdesc = snp_dev->msg_desc;
@@ -233,15 +258,35 @@ static int tio_tdi_status(struct pci_dev *pdev, struct snp_guest_dev *snp_dev,
 	rc = guest_request_tio_data(snp_dev, TIO_MSG_TDI_INFO_REQ, &req,
 				    sizeof(req), rsp, resp_len,
 				    req.guest_device_id, &state,
+				    certs, meas, nonce,
 				    report, &fw_err);
 	if (rc)
 		return rc;
 
+	ts->meas_digest_valid = rsp->meas_digest_valid;
+	ts->meas_digest_fresh = rsp->meas_digest_fresh;
 	ts->no_fw_update = rsp->no_fw_update;
 	ts->cache_line_size = rsp->cache_line_size == 0 ? 64 : 128;
 	ts->lock_msix = rsp->lock_msix;
 	ts->bind_p2p = rsp->bind_p2p;
 	ts->all_request_redirect = rsp->all_request_redirect;
+#define __ALGO(x, n, y) \
+	((((x) & (0xFFUL << (n))) == TIO_SPDM_ALGOS_##y) ? \
+	 (1ULL << TSM_SPDM_ALGOS_##y) : 0)
+	ts->spdm_algos =
+		__ALGO(rsp->spdm_algos, 0, DHE_SECP256R1) |
+		__ALGO(rsp->spdm_algos, 0, DHE_SECP384R1) |
+		__ALGO(rsp->spdm_algos, 8, AEAD_AES_128_GCM) |
+		__ALGO(rsp->spdm_algos, 8, AEAD_AES_256_GCM) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_RSASSA_3072) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P256) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P384) |
+		__ALGO(rsp->spdm_algos, 24, HASH_TPM_ALG_SHA_256) |
+		__ALGO(rsp->spdm_algos, 24, HASH_TPM_ALG_SHA_384) |
+		__ALGO(rsp->spdm_algos, 32, KEY_SCHED_SPDM_KEY_SCHEDULE);
+#undef __ALGO
+	memcpy(ts->certs_digest, rsp->certs_digest, sizeof(ts->certs_digest));
+	memcpy(ts->meas_digest, rsp->meas_digest, sizeof(ts->meas_digest));
 	memcpy(ts->interface_report_digest, rsp->interface_report_digest,
 	       sizeof(ts->interface_report_digest));
 	ts->intf_report_counter = rsp->tdi_report_count;
@@ -595,7 +640,8 @@ static int sev_guest_status(struct pci_dev *pdev, struct tsm_tdi_status *ts)
 	struct tio_guest_tdi *gtdi = pdev_to_tdi(pdev);
 	struct pci_tsm *tsm = pdev->tsm;
 
-	return tio_tdi_status(pdev, gtdi->snp_dev, ts, &tsm->report);
+	return tio_tdi_status(pdev, gtdi->snp_dev, ts,
+			      &tsm->certs, &tsm->meas, tsm->nonce, &tsm->report);
 }
 
 static struct pci_tsm *sev_guest_lock(struct tsm_dev *tsmdev, struct pci_dev *pdev)
@@ -630,7 +676,7 @@ static struct pci_tsm *sev_guest_lock(struct tsm_dev *tsmdev, struct pci_dev *pd
 	}
 	pci_dbg(pdev, "New TDI ID=%llx\n", tdi_id);
 
-	rc = tio_tdi_status(pdev, gtdi->snp_dev, &ts, &report);
+	rc = tio_tdi_status(pdev, gtdi->snp_dev, &ts, NULL, NULL, NULL, &report);
 	if (rc)
 		return ERR_PTR(rc);
 	if (!report)

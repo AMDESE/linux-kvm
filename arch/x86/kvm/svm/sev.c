@@ -4381,6 +4381,10 @@ static int snp_sev_tio_guest_request(struct kvm_vcpu *vcpu, gpa_t req_gpa, gpa_t
 
 		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_STATE)
 			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_STATE;
+		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_CERTS)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_CERTS;
+		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_MEAS)
+			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_MEAS;
 		if (param & SVM_VMGEXIT_SEV_TIO_GR_INFO_REPORT)
 			vcpu->run->vmgexit.tio_req.flags |= KVM_USER_VMGEXIT_TIO_REQ_FLAG_PARAM_REPORT;
 	} else if (msg_type == TIO_MSG_MMIO_VALIDATE_REQ) {

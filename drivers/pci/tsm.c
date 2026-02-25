@@ -831,6 +831,113 @@ static ssize_t blob_show(struct tsm_blob *b, char *buf, ssize_t size)
 	return bin_show(b->data, b->len, buf, size);
 }
 
+static ssize_t certs_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_tsm *tsm = to_pci_dev(dev)->tsm;
+
+	if (!tsm)
+		return sysfs_emit(buf, "\n");
+
+	if (!tsm->certs && tsm->dsm_dev)
+		tsm = tsm->dsm_dev->tsm;
+
+	guard(mutex)(&tsm->lock2);
+
+	return blob_show(tsm->certs, buf, PAGE_SIZE);
+}
+
+static DEVICE_ATTR_RO(certs);
+
+static ssize_t meas_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_tsm *tsm = to_pci_dev(dev)->tsm;
+
+	if (!tsm)
+		return sysfs_emit(buf, "\n");
+
+	if (!tsm->meas && tsm->dsm_dev) {
+		struct pci_dev *pdev = to_pci_dev(dev);
+		const struct pci_tsm_ops *ops;
+		int rc;
+
+		ACQUIRE(rwsem_write_kill, lock)(&pci_tsm_rwsem);
+		if ((rc = ACQUIRE_ERR(rwsem_write_kill, &lock)))
+			return rc;
+
+		ops = pdev->tsm->tsm_dev->pci_ops;
+		rc = ops->measurements(tsm->dsm_dev);
+		if (rc)
+			return rc;
+
+		tsm = tsm->dsm_dev->tsm;
+	}
+	guard(mutex)(&tsm->lock2);
+
+	return blob_show(tsm->meas, buf, PAGE_SIZE);
+}
+
+static DEVICE_ATTR_RO(meas);
+
+static ssize_t meas_nonce_store(struct device *dev, struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct pci_tsm *tsm = to_pci_dev(dev)->tsm;
+
+	if (!tsm)
+		return -EINVAL;
+
+	if (!tsm->meas && tsm->dsm_dev)
+		tsm = tsm->dsm_dev->tsm;
+
+	guard(mutex)(&tsm->lock2);
+
+	memset(tsm->nonce, 0, sizeof(tsm->nonce));
+	memcpy(tsm->nonce, buf, min(count, sizeof(tsm->nonce)));
+	return count;
+}
+
+static ssize_t meas_nonce_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_tsm *tsm = to_pci_dev(dev)->tsm;
+
+	if (!tsm)
+		return sysfs_emit(buf, "\n");
+
+	if (!tsm->meas && tsm->dsm_dev)
+		tsm = tsm->dsm_dev->tsm;
+
+	guard(mutex)(&tsm->lock2);
+
+	return bin_show(tsm->nonce, sizeof(tsm->nonce), buf, PAGE_SIZE);
+}
+
+static DEVICE_ATTR_RW(meas_nonce);
+
+static ssize_t dsm_status_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	const struct pci_tsm_ops *ops;
+	struct tsm_dsm_status s = { 0 };
+	int rc;
+
+	if (!pdev->tsm)
+		return sysfs_emit(buf, "\n");
+
+	ACQUIRE(rwsem_write_kill, lock)(&pci_tsm_rwsem);
+	if ((rc = ACQUIRE_ERR(rwsem_write_kill, &lock)))
+		return rc;
+
+	ops = pdev->tsm->tsm_dev->pci_ops;
+	rc = ops->dsm_status(pdev, &s);
+	if (rc)
+		return rc;
+
+	s.valid = 1;
+	return bin_show((char *)&s, sizeof(s), buf, PAGE_SIZE);
+}
+
+static DEVICE_ATTR_RO(dsm_status);
+
 static ssize_t tdi_status_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -846,7 +953,9 @@ static ssize_t tdi_status_show(struct device *dev, struct device_attribute *attr
 		return rc;
 
 	ops = pdev->tsm->tsm_dev->pci_ops;
-	if (ops->status) /* the guest */
+	if (ops->tdi_status) /* the host */
+		rc = ops->tdi_status(pdev, &ts);
+	else if (ops->status) /* the guest */
 		rc = ops->status(pdev, &ts);
 	else
 		rc = -ENXIO;
@@ -945,16 +1054,32 @@ static umode_t pci_tsm_attr_visible(struct kobject *kobj,
 
 		if (attr == &dev_attr_connect.attr ||
 		    attr == &dev_attr_report.attr ||
+		    attr == &dev_attr_certs.attr ||
+		    attr == &dev_attr_meas.attr ||
+		    attr == &dev_attr_meas_nonce.attr ||
+		    attr == &dev_attr_report.attr ||
+		    attr == &dev_attr_dsm_status.attr ||
+		    attr == &dev_attr_tdi_status.attr ||
 		    attr == &dev_attr_disconnect.attr) {
 			if (is_pci_tsm_pf0(pdev))
 				return attr->mode;
 		}
 	}
 
+	if (pci_tsm_vf_group_visible(kobj)) {
+		if (attr == &dev_attr_report.attr ||
+		    attr == &dev_attr_tdi_status.attr)
+			return attr->mode;
+	}
+
 	if (pci_tsm_devsec_group_visible(kobj)) {
 		if (attr == &dev_attr_accept.attr ||
 		    attr == &dev_attr_lock.attr ||
 		    attr == &dev_attr_unlock.attr ||
+		    attr == &dev_attr_certs.attr ||
+		    attr == &dev_attr_meas.attr ||
+		    attr == &dev_attr_meas_nonce.attr ||
+		    attr == &dev_attr_report.attr ||
 		    attr == &dev_attr_tdi_status.attr)
 			return attr->mode;
 	}
@@ -978,6 +1103,11 @@ static struct attribute *pci_tsm_attrs[] = {
 	&dev_attr_accept.attr,
 	&dev_attr_lock.attr,
 	&dev_attr_unlock.attr,
+	&dev_attr_certs.attr,
+	&dev_attr_meas.attr,
+	&dev_attr_meas_nonce.attr,
+	&dev_attr_dsm_status.attr,
+	&dev_attr_tdi_status.attr,
 	&dev_attr_report.attr,
 	NULL
 };

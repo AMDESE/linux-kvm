@@ -9,6 +9,9 @@ struct pci_tsm;
 struct tsm_dev;
 struct kvm;
 struct tsm_tdi_status;
+struct tsm_dsm_status;
+#define SPDM_MEASUREMENTS_NONCE_LEN	32
+typedef __u8 spdm_measurements_nonce_t[SPDM_MEASUREMENTS_NONCE_LEN];
 enum pci_tsm_req_scope;
 
 /* Data object for measurements/certificates/attestationreport */
@@ -71,6 +74,9 @@ struct pci_tsm_ops {
 				     sockptr_t req_in, size_t in_len,
 				     sockptr_t req_out, size_t out_len,
 				     u64 *tsm_code);
+		int (*dsm_status)(struct pci_dev *pdev, struct tsm_dsm_status *s);
+		int (*measurements)(struct pci_dev *pdev);
+		int (*tdi_status)(struct pci_dev *pdev, struct tsm_tdi_status *ts);
 	);
 
 	/*
@@ -139,6 +145,12 @@ struct pci_tsm {
 	struct tsm_dev *tsm_dev;
 	struct pci_tdi *tdi;
 	struct tsm_blob *report;
+	// Only valid if dsm==NULL, which is the case of a guest
+	// FIXME: add locking around the blobs below, or reuse pci_tsm_pf0::lock
+	spdm_measurements_nonce_t nonce;
+	bool meas_transcript; /* True if meas is a transcript, false if a single block */
+	struct tsm_blob *meas;
+	struct tsm_blob *certs;
 };
 
 /**
@@ -307,9 +319,6 @@ struct tdisp_interface_id {
 	__u8 reserved[8];
 } __packed;
 
-#define SPDM_MEASUREMENTS_NONCE_LEN	32
-typedef __u8 spdm_measurements_nonce_t[SPDM_MEASUREMENTS_NONCE_LEN];
-
 /*
  * TDI Report Structure as defined in TDISP.
  */
@@ -388,5 +397,30 @@ struct tsm_tdi_status {
 	__u64 intf_report_counter;
 	struct tdisp_interface_id id;
 } __packed;
+
+struct tsm_dsm_status {
+	__u8 valid;
+	__u8 ctx_state;
+	__u8 tc_mask;
+	__u8 certs_slot;
+	__u8 no_fw_update;
+	__u8 reserved[3]; /* padding */
+	__u16 device_id;
+	__u16 segment_id;
+	__u16 ide_stream_id[8];
+} __packed;
+
+enum tsm_spdm_algos {
+	TSM_SPDM_ALGOS_DHE_SECP256R1,
+	TSM_SPDM_ALGOS_DHE_SECP384R1,
+	TSM_SPDM_ALGOS_AEAD_AES_128_GCM,
+	TSM_SPDM_ALGOS_AEAD_AES_256_GCM,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_RSASSA_3072,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P256,
+	TSM_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P384,
+	TSM_SPDM_ALGOS_HASH_TPM_ALG_SHA_256,
+	TSM_SPDM_ALGOS_HASH_TPM_ALG_SHA_384,
+	TSM_SPDM_ALGOS_KEY_SCHED_SPDM_KEY_SCHEDULE,
+};
 
 #endif /*__PCI_TSM_H */
