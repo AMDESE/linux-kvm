@@ -355,4 +355,30 @@ struct tdi_report_footer {
 #define TDI_REPORT_FTR(rep)		((struct tdi_report_footer *) &TDI_REPORT_MR((rep), \
 					TDI_REPORT_MR_NUM(rep)))
 
+enum tsm_tdisp_state {
+	TDISP_STATE_CONFIG_UNLOCKED = 0,
+	TDISP_STATE_CONFIG_LOCKED = 1,
+	TDISP_STATE_RUN = 2,
+	TDISP_STATE_ERROR = 3,
+};
+
+enum tsm_tdisp_status {
+	TDISP_STATE_BOUND = 0,
+	TDISP_STATE_INVALID = 1,
+	TDISP_STATE_UNBOUND = 2,
+};
+
+struct tsm_tdi_status {
+	__u8 status; /* enum tsm_tdisp_status */
+	__u8 state; /* enum tsm_tdisp_state */
+	__u8 all_request_redirect;
+	__u8 bind_p2p;
+	__u8 lock_msix;
+	__u8 no_fw_update;
+	__u16 cache_line_size;
+	__u8 interface_report_digest[48];
+	__u64 intf_report_counter;
+	struct tdisp_interface_id id;
+} __packed;
+
 #endif /*__PCI_TSM_H */
