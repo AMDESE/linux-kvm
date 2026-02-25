@@ -2677,4 +2677,22 @@ bool kvm_is_gmemfd(struct file *file);
 struct folio *kvm_gmemfd_get_pfn(struct file *file, unsigned long index,
 				 unsigned long *pfn, int *max_order);
 
+struct gmemfd_notifier;
+
+struct gmemfd_notifier_ops {
+	void (*zap)(struct gmemfd_notifier *notifier, pgoff_t off, size_t npages);
+	void (*prepare)(struct gmemfd_notifier *notifier, pgoff_t off, size_t npages);
+	void (*invalidate)(struct gmemfd_notifier *notifier, pgoff_t off, size_t npages);
+	/* Called when the gmem file is closed; optional */
+	void (*release)(struct gmemfd_notifier *notifier);
+};
+
+struct gmemfd_notifier {
+	struct hlist_node next;
+	const struct gmemfd_notifier_ops *ops;
+};
+
+int kvm_gmemfd_notifier_register(struct file *file, struct gmemfd_notifier *notifier);
+void kvm_gmemfd_notifier_unregister(struct gmemfd_notifier *notifier);
+
 #endif

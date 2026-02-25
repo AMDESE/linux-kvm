@@ -26,6 +26,7 @@ static struct vfsmount *kvm_gmem_mnt;
 struct gmem_file {
 	struct kvm *kvm;
 	struct xarray bindings;
+	struct hlist_head iommufd_list;
 	struct list_head entry;
 };
 
@@ -265,6 +266,10 @@ static void __kvm_gmem_zap(struct gmem_file *f, pgoff_t start, pgoff_t end,
 	struct kvm_memory_slot *slot;
 	struct kvm *kvm = f->kvm;
 	unsigned long index;
+
+	struct gmemfd_notifier *notifier;
+	hlist_for_each_entry(notifier, &f->iommufd_list, next)
+		notifier->ops->zap(notifier, start, end - start);
 
 	xa_for_each_range(&f->bindings, index, slot, start, end - 1) {
 		pgoff_t pgoff = slot->gmem.pgoff;
@@ -626,6 +631,15 @@ static int kvm_gmem_release(struct inode *inode, struct file *file)
 
 	mutex_unlock(&kvm->slots_lock);
 
+	struct gmemfd_notifier *notifier;
+	struct hlist_node *tmp;
+
+	hlist_for_each_entry_safe(notifier, tmp, &f->iommufd_list, next) {
+		if (notifier->ops->release)
+			notifier->ops->release(notifier);
+		hlist_del(&notifier->next);
+	}
+
 	xa_destroy(&f->bindings);
 	kfree(f);
 
@@ -808,7 +822,7 @@ static int kvm_gmem_mas_preallocate(struct ma_state *mas, u64 attributes,
 	return mas_preallocate(mas, xa_mk_value(attributes), GFP_KERNEL);
 }
 
-static bool kvm_arch_gmem_invalidate_range(struct inode *inode, pgoff_t start, pgoff_t end)
+static bool kvm_arch_gmem_invalidate_range(struct kvm *kvm, struct inode *inode, pgoff_t start, pgoff_t end)
 {
 	struct address_space *mapping = inode->i_mapping;
 	const int filemap_get_folios_refcount = 1;
@@ -832,6 +846,12 @@ static bool kvm_arch_gmem_invalidate_range(struct inode *inode, pgoff_t start, p
 			struct folio *folio = fbatch.folios[i];
 
 			kvm_arch_gmem_invalidate(folio_pfn(folio), folio_pfn(folio) + folio_nr_pages(folio));
+
+//			struct gmemfd_notifier *notifier;
+//			size_t npages = folio_nr_pages(folio);
+
+//			hlist_for_each_entry(notifier, &kvm->iommufd_list, next)
+//				notifier->ops->invalidate(notifier, gfn, npages);
 		}
 
 out:
@@ -892,7 +912,7 @@ static pgoff_t kvm_gmem_compute_invalidate_end(struct inode *inode,
 	return round_up(index, 1 << gi->page_order);
 }
 
-static int kvm_gmem_convert(struct inode *inode, pgoff_t start,
+static int kvm_gmem_convert(struct kvm *kvm, struct inode *inode, pgoff_t start,
 			    size_t nr_pages, uint64_t attrs,
 			    pgoff_t *err_index)
 {
@@ -936,7 +956,7 @@ static int kvm_gmem_convert(struct inode *inode, pgoff_t start,
 	kvm_gmem_invalidate_begin(inode, invalidate_start, invalidate_end);
 	kvm_gmem_zap(inode, start, end);
 
-	if (!kvm_arch_gmem_invalidate_range(inode, start, end))
+	if (!kvm_arch_gmem_invalidate_range(kvm, inode, start, end))
 		r = -EAGAIN;
 
 	mas_store_prealloc(&mas, xa_mk_value(attrs));
@@ -946,7 +966,7 @@ static int kvm_gmem_convert(struct inode *inode, pgoff_t start,
 	return 0;
 }
 
-static int __kvm_gmem_set_attributes(struct inode *inode, pgoff_t start,
+static int __kvm_gmem_set_attributes(struct kvm *kvm, struct inode *inode, pgoff_t start,
 				     size_t nr_pages, uint64_t attrs,
 				     pgoff_t *err_index)
 {
@@ -976,7 +996,7 @@ static int __kvm_gmem_set_attributes(struct inode *inode, pgoff_t start,
 		batch_end = min(round_up(batch_start + 1, batch_size), end);
 		batch_nr_pages = batch_end - batch_start;
 
-		r = kvm_gmem_convert(inode, batch_start, batch_nr_pages, attrs,
+		r = kvm_gmem_convert(kvm, inode, batch_start, batch_nr_pages, attrs,
 				     err_index);
 		if (r)
 			break;
@@ -1014,7 +1034,7 @@ static long kvm_gmem_set_attributes(struct file *file, void __user *argp)
 
 	nr_pages = attrs.size >> PAGE_SHIFT;
 	index = attrs.offset >> PAGE_SHIFT;
-	r = __kvm_gmem_set_attributes(inode, index, nr_pages, attrs.attributes,
+	r = __kvm_gmem_set_attributes(NULL/*kvm*/, inode, index, nr_pages, attrs.attributes,
 				      &err_index);
 
 	/*
@@ -1236,6 +1256,7 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags, u8 page_or
 	kvm_get_kvm(kvm);
 	f->kvm = kvm;
 	xa_init(&f->bindings);
+	INIT_HLIST_HEAD(&f->iommufd_list);
 	list_add(&f->entry, &inode->i_mapping->i_private_list);
 
 	fd_install(fd, file);
@@ -1484,6 +1505,7 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     int *max_order)
 {
 	pgoff_t index = kvm_gmem_get_index(slot, gfn);
+	struct gmem_file *f;
 	struct folio *folio;
 	int r = 0;
 
@@ -1491,6 +1513,7 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 	if (!file)
 		return -EFAULT;
 
+	f = file->private_data;
 	filemap_invalidate_lock_shared(file_inode(file)->i_mapping);
 
 	folio = __kvm_gmem_get_pfn(file, slot, index, pfn, max_order);
@@ -1504,8 +1527,16 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		folio_mark_uptodate(folio);
 	}
 
-	if (!kvm_gmem_is_shared_mem(file_inode(file), index))
+	if (!kvm_gmem_is_shared_mem(file_inode(file), index)) {
 		r = kvm_gmem_prepare_folio(kvm, slot, gfn, folio);
+
+		struct gmemfd_notifier *notifier;
+		pgoff_t off = slot->gmem.pgoff + gfn - slot->base_gfn;
+		size_t npages = folio_nr_pages(folio);
+
+		hlist_for_each_entry(notifier, &f->iommufd_list, next)
+			notifier->ops->prepare(notifier, off, npages);
+	}
 
 	folio_unlock(folio);
 
@@ -1785,6 +1816,25 @@ void kvm_gmem_exit(void)
 	rcu_barrier();
 	kmem_cache_destroy(kvm_gmem_inode_cachep);
 }
+
+int kvm_gmemfd_notifier_register(struct file *file, struct gmemfd_notifier *notifier)
+{
+	struct gmem_file *f;
+
+	if (!kvm_is_gmemfd(file))
+		return -EINVAL;
+
+	f = file->private_data;
+	hlist_add_head(&notifier->next, &f->iommufd_list);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvm_gmemfd_notifier_register);
+
+void kvm_gmemfd_notifier_unregister(struct gmemfd_notifier *notifier)
+{
+	hlist_del(&notifier->next);
+}
+EXPORT_SYMBOL_GPL(kvm_gmemfd_notifier_unregister);
 
 bool kvm_is_gmemfd(struct file *file)
 {

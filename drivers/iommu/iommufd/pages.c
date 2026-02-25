@@ -1481,6 +1481,43 @@ struct iopt_pages *iopt_alloc_user_pages(void __user *uptr,
 	return pages;
 }
 
+static void iopt_pages_gmemfd_zap(struct gmemfd_notifier *notifier,
+				  pgoff_t off, size_t npages)
+{
+	struct iopt_pages *pages = container_of(notifier, struct iopt_pages, notifier);
+
+	(void)off;
+	(void)npages;
+	(void)pages;
+}
+
+static void iopt_pages_gmemfd_prepare(struct gmemfd_notifier *notifier,
+				      pgoff_t off, size_t npages)
+{
+	struct iopt_pages *pages = container_of(notifier, struct iopt_pages, notifier);
+
+	(void)off;
+	(void)npages;
+	(void)pages;
+}
+
+static void iopt_pages_gmemfd_invalidate(struct gmemfd_notifier *notifier,
+					 pgoff_t off, size_t npages)
+{
+	struct iopt_pages *pages = container_of(notifier, struct iopt_pages, notifier);
+
+	(void)off;
+	(void)npages;
+	(void)pages;
+}
+
+static const struct gmemfd_notifier_ops iopt_pages_gmemfd_ops = {
+	.zap = iopt_pages_gmemfd_zap,
+	.prepare = iopt_pages_gmemfd_prepare,
+	.invalidate = iopt_pages_gmemfd_invalidate,
+//	.smash = iopt_pages_gmemfd_smash,
+};
+
 struct iopt_pages *iopt_alloc_file_pages(struct file *file,
 					 unsigned long start_byte,
 					 unsigned long start,
@@ -1495,6 +1532,16 @@ struct iopt_pages *iopt_alloc_file_pages(struct file *file,
 	pages->file = get_file(file);
 	pages->start = start - start_byte;
 	pages->type = IOPT_ADDRESS_FILE;
+
+	if (iommufd_is_gmemfd(pages)) {
+		int  ret;
+
+		pages->notifier.ops = &iopt_pages_gmemfd_ops;
+		ret = kvm_gmemfd_notifier_register(pages->file, &pages->notifier);
+		if (ret)
+			return ERR_PTR(ret);
+	}
+
 	return pages;
 }
 
@@ -1728,6 +1775,9 @@ void iopt_release_pages(struct kref *kref)
 		dma_buf_put(dmabuf);
 		WARN_ON(!list_empty(&pages->dmabuf.tracker));
 	} else if (pages->type == IOPT_ADDRESS_FILE) {
+		if (iommufd_is_gmemfd(pages))
+			kvm_gmemfd_notifier_unregister(&pages->notifier);
+
 		fput(pages->file);
 	}
 	kfree(pages);

@@ -12,6 +12,7 @@
 #include <linux/refcount.h>
 #include <linux/types.h>
 #include <linux/xarray.h>
+#include <linux/kvm_host.h>
 #include <uapi/linux/iommufd.h>
 
 struct device;
