@@ -352,7 +352,7 @@ static inline bool is_executable_pte(u64 spte, bool is_user_access,
 	if (spte & shadow_nx_mask)
 		return false;
 
-	if (!mmu_has_mbec(vcpu))
+	if (!mmu_has_gec(vcpu))
 		return (spte & shadow_x_mask) == shadow_x_mask;
 
 	/*
@@ -373,7 +373,7 @@ static inline bool is_executable_pte_fault(u64 spte,
 	if (spte & shadow_nx_mask)
 		return false;
 
-	if (!mmu_has_mbec(vcpu))
+	if (!mmu_has_gec(vcpu))
 		return (spte & shadow_x_mask) == shadow_x_mask;
 
 	/*

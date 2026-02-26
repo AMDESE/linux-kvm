@@ -182,6 +182,22 @@ static inline bool mmu_has_mbec(struct kvm_vcpu *vcpu)
 	return vcpu->arch.mmu->root_role.has_mbec;
 }
 
+static inline bool mmu_has_gmet(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.mmu->root_role.has_gmet;
+}
+
+/*
+ * Check if guest execute control (GEC) is enabled. GEC is a generic term
+ * for features that provide separate execute permissions for user vs supervisor:
+ * - Intel MBEC (Mode-Based Execute Control) uses EPT bit 10 for user-execute
+ * - AMD GMET (Guest Mode Execute Trap) uses NPT U/S bit semantics
+ */
+static inline bool mmu_has_gec(struct kvm_vcpu *vcpu)
+{
+	return mmu_has_mbec(vcpu) || mmu_has_gmet(vcpu);
+}
+
 /*
  * Check if a given access (described through the I/D, W/R and U/S bits of a
  * page fault error code pfec) causes a permission fault with the given PTE

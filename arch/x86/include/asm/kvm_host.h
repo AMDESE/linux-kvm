@@ -363,8 +363,9 @@ union kvm_mmu_page_role {
 		unsigned guest_mode:1;
 		unsigned passthrough:1;
 		unsigned is_mirror:1;
-		unsigned has_mbec:1;
-		unsigned:2;
+		unsigned has_mbec:1;	/* Intel MBEC (Mode-Based Execute Control) */
+		unsigned has_gmet:1;	/* AMD GMET (Guest Mode Execute Trap) */
+		unsigned:1;
 
 		/*
 		 * This is left at the top of the word so that
