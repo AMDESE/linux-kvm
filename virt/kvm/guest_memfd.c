@@ -238,15 +238,6 @@ static struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index)
 		folio = __kvm_gmem_get_folio(inode, index, policy);
 	} while (IS_ERR(folio) && PTR_ERR(folio) == -EEXIST);
 
-	/*
-	 * External interfaces like kvm_gmem_get_pfn() support dealing
-	 * with hugepages to a degree, but internally, guest_memfd currently
-	 * assumes that all folios are order-0 and handling would need
-	 * to be updated for anything otherwise (e.g. page-clearing
-	 * operations).
-	 */
-	WARN_ON_ONCE(folio_order(folio));
-
 	mpol_cond_put(policy);
 
 	if (IS_ERR(folio))
