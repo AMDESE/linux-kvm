@@ -1273,7 +1273,7 @@
 #define  PCI_IDE_CAP_LINK_TC_NUM	__GENMASK(15, 13) /* Link IDE TCs */
 #define  PCI_IDE_CAP_SEL_NUM		__GENMASK(23, 16) /* Supported Selective IDE Streams */
 #define  PCI_IDE_CAP_TEE_LIMITED	0x1000000 /* TEE-Limited Stream Supported */
-#define  PCI_IDE_CAP_XT_SUP		BIT_ULL(24) /* XT Supported */
+#define  PCI_IDE_CAP_XT_SUP		BIT_ULL(25) /* XT Supported */
 #define PCI_IDE_CTL			0x08
 #define  PCI_IDE_CTL_FLOWTHROUGH_IDE	0x4  /* Flow-Through IDE Stream Enabled */
 
