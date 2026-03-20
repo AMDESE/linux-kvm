@@ -16,6 +16,8 @@ static struct class *tsm_class;
 static DECLARE_RWSEM(tsm_rwsem);
 static DEFINE_IDA(tsm_ida);
 
+static int tsm_class_init(void);
+
 struct tsm_blob *tsm_blob_new(void *data, size_t len)
 {
 	struct tsm_blob *b;
@@ -55,7 +57,11 @@ struct tsm_dev *find_tsm_dev(int id)
 static struct tsm_dev *alloc_tsm_dev(struct device *parent)
 {
 	struct device *dev;
-	int id;
+	int id, ret;
+
+	ret = tsm_class_init();
+	if (ret)
+		return ERR_PTR(ret);
 
 	struct tsm_dev *tsm_dev __free(kfree) =
 		kzalloc(sizeof(*tsm_dev), GFP_KERNEL);
@@ -201,8 +207,11 @@ static void tsm_release(struct device *dev)
 	kfree(tsm_dev);
 }
 
-static int __init tsm_init(void)
+static int tsm_class_init(void)
 {
+	if (tsm_class)
+		return 0;
+
 	tsm_class = class_create("tsm");
 	if (IS_ERR(tsm_class))
 		return PTR_ERR(tsm_class);
@@ -210,6 +219,11 @@ static int __init tsm_init(void)
 	tsm_class->dev_groups = tsm_pci_groups;
 	tsm_class->dev_release = tsm_release;
 	return 0;
+}
+
+static int __init tsm_init(void)
+{
+	return tsm_class_init();
 }
 module_init(tsm_init)
 
