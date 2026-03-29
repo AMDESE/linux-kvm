@@ -367,6 +367,8 @@ void __init swiotlb_init_remap(bool addressing_limit, unsigned int flags,
 		swiotlb_force_bounce || (flags & SWIOTLB_FORCE);
 	io_tlb_default_mem.for_alloc = (flags & SWIOTLB_ALLOC);
 
+	// Uncomment the below line to exercise SWIOTLB + vTOM thing for SEV-TIO
+	//io_tlb_default_mem.for_alloc = true;
 #ifdef CONFIG_SWIOTLB_DYNAMIC
 	if (!remap)
 		io_tlb_default_mem.can_grow = true;
