@@ -1697,6 +1697,17 @@ static int __sev_platform_shutdown_locked(int *error)
 		return 0;
 
 	ret = __sev_do_cmd_locked(SEV_CMD_SHUTDOWN, NULL, error);
+	if (ret == -EIO && *error == SEV_RET_DFFLUSH_REQUIRED) {
+		int dfflush_error = 0;
+
+		ret = __sev_do_cmd_locked(SEV_CMD_DF_FLUSH, NULL, &dfflush_error);
+		if (ret)
+			dev_err(sev->dev, "SEV: DF_FLUSH failed %#x, rc %d\n",
+				dfflush_error, ret);
+		else
+			ret = __sev_do_cmd_locked(SEV_CMD_SHUTDOWN, NULL, error);
+	}
+
 	if (ret) {
 		dev_err(sev->dev, "SEV: failed to SHUTDOWN error %#x, rc %d\n",
 			*error, ret);
