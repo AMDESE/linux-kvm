@@ -70,7 +70,7 @@
 #endif
 #define BATCH_BACKUP_SIZE 32
 
-#define iommufd_is_gmemfd(ps) ((ps)->type == IOPT_ADDRESS_FILE) && kvm_is_gmemfd((ps)->file)
+#define iommufd_is_gmemfd(ps) (((ps)->type == IOPT_ADDRESS_FILE) && kvm_is_gmemfd((ps)->file))
 
 /*
  * More memory makes pin_user_pages() and the batching more efficient, but as
