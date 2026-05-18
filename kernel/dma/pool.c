@@ -347,6 +347,8 @@ bool dma_free_from_pool(struct device *dev, void *start, size_t size)
 
 	while ((dma_pool = dma_guess_pool(dma_pool, 0))) {
 
+		if (!dma_pool->pool)
+			continue;
 		if (!gen_pool_has_addr(dma_pool->pool, (unsigned long)start, size))
 			continue;
 
