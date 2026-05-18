@@ -382,6 +382,19 @@ static void __init *swiotlb_memblock_alloc(unsigned long nslabs,
 	return tlb;
 }
 
+static unsigned io_tlb_alloc = 0;
+static int __init
+setup_io_tlb_alloc(char *str)
+{
+	if (isdigit(*str)) {
+		io_tlb_alloc = simple_strtoul(str, &str, 0);
+		pr_err("___K___ %s %u: io_tlb_alloc=%d\n", __func__, __LINE__, io_tlb_alloc);
+	}
+
+	return 0;
+}
+early_param("swiotlb_alloc", setup_io_tlb_alloc);
+
 /*
  * Statically reserve bounce buffer space and initialize bounce buffer data
  * structures for the software IO TLB used to implement the DMA API.
@@ -402,6 +415,7 @@ void __init swiotlb_init_remap(bool addressing_limit, unsigned int flags,
 
 	io_tlb_default_mem.force_bounce = swiotlb_force_bounce;
 
+	io_tlb_default_mem.for_alloc = io_tlb_alloc;
 #ifdef CONFIG_SWIOTLB_DYNAMIC
 	if (!remap)
 		io_tlb_default_mem.can_grow = true;
@@ -1887,8 +1901,6 @@ static inline void swiotlb_create_debugfs_files(struct io_tlb_mem *mem,
 
 #endif	/* CONFIG_DEBUG_FS */
 
-#ifdef CONFIG_DMA_RESTRICTED_POOL
-
 struct page *swiotlb_alloc(struct device *dev, size_t size, unsigned long attrs)
 {
 	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
@@ -1938,6 +1950,7 @@ void swiotlb_free_from_pool(struct device *dev, phys_addr_t tlb_addr, size_t siz
 {
 	swiotlb_release_slots(dev, tlb_addr, pool);
 }
+#ifdef CONFIG_DMA_RESTRICTED_POOL
 
 static int rmem_swiotlb_device_init(struct reserved_mem *rmem,
 				    struct device *dev)
