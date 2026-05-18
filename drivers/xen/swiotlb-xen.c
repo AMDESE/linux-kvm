@@ -55,7 +55,7 @@ static inline phys_addr_t xen_phys_to_bus(struct device *dev, phys_addr_t paddr)
 
 static inline dma_addr_t xen_phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
-	return phys_to_dma(dev, xen_phys_to_bus(dev, paddr));
+	return phys_to_dma(dev, xen_phys_to_bus(dev, paddr), 0);
 }
 
 static inline phys_addr_t xen_bus_to_phys(struct device *dev,
