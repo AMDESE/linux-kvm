@@ -278,13 +278,14 @@ void *dma_direct_alloc(struct device *dev, size_t size,
 	}
 
 	if (is_swiotlb_for_alloc(dev)) {
-		page = dma_direct_alloc_swiotlb(dev, size, attrs);
+		page = dma_direct_alloc_swiotlb(dev, size, attrs | DMA_ATTR_CC_SHARED);
 		if (page) {
 			/*
 			 * swiotlb allocations comes from pool already marked
 			 * decrypted
 			 */
 			mark_mem_decrypt = false;
+			attrs |= DMA_ATTR_CC_SHARED;
 			goto setup_page;
 		}
 		return NULL;
