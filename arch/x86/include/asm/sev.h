@@ -149,6 +149,9 @@ struct snp_req_data {
 	unsigned long resp_gpa;
 	unsigned long data_gpa;
 	unsigned int data_npages;
+	unsigned int guest_rid;
+	unsigned long npages;
+	unsigned long param;
 };
 
 #define MAX_AUTHTAG_LEN		32
@@ -596,6 +599,8 @@ static inline void sev_evict_cache(void *va, int npages)
 		val = bytes[page_idx * PAGE_SIZE + PAGE_SIZE - 1];
 	}
 }
+
+int sev_tio_op(u32 guest_rid, unsigned int op, u64 *fw_err, u64 *tdi_id);
 
 #else	/* !CONFIG_AMD_MEM_ENCRYPT */
 

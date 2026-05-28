@@ -122,6 +122,44 @@
 #define SVM_VMGEXIT_SAVIC_REGISTER_GPA		0
 #define SVM_VMGEXIT_SAVIC_UNREGISTER_GPA	1
 #define SVM_VMGEXIT_SAVIC_SELF_GPA		~0ULL
+#define SVM_VMGEXIT_SEV_TIO_GR			0x80000020ull
+#define SVM_VMGEXIT_SEV_TIO_GR_INFO_STATE	BIT(0)
+#define SVM_VMGEXIT_SEV_TIO_GR_INFO_CERTS	BIT(1)
+#define SVM_VMGEXIT_SEV_TIO_GR_INFO_MEAS	BIT(2)
+#define SVM_VMGEXIT_SEV_TIO_GR_INFO_REPORT	BIT(3)
+
+#define SVM_VMGEXIT_SEV_TIO_GR_SDTE_VALIDATE	BIT(0)
+#define SVM_VMGEXIT_SEV_TIO_GR_SDTE_VTOM	GENMASK_ULL(51, 21)
+
+/*
+ * TIO_GUEST_REQUEST's MMIO_VALIDATE_REQ/MMIO_CONFIG_REQ encoding for MMIO in RDX:
+ *
+ * T....... ....GGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGGGGGG GGGG.... ........
+ * Where:
+ *	G - guest physical address
+ *	T - TEE
+ */
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_GFN(r)      (((r) & 0x000FFFFFFFFFF000ULL) >> PAGE_SHIFT)
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_RESERVED(r) ((r) & 0x7FF0000000000FFFULL)
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_PRIVATE(r)  (!!((r) & BIT(63)))
+
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_NUM(r)      ((uint32_t)((r) >> 32))
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_ADDR(r)     ((uint32_t)((r) & 0xFFFFFFFF))
+
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_MK_VALIDATE(start, private) \
+	((SVM_VMGEXIT_SEV_TIO_GR_MMIO_GFN(start) << PAGE_SHIFT) | \
+	((private) ? BIT(63) : 0))
+
+#define SVM_VMGEXIT_SEV_TIO_OP			0x80000021ull
+#define SVM_VMGEXIT_SEV_TIO_GR_MMIO_MK_NUM_BDFN(n, bdfn) (((uint64_t)(n) << 32) | (bdfn))
+
+#define SVM_VMGEXIT_SEV_TIO_OP_PARAM(guest_id, action)	((u64)(action)<<32|(guest_id))
+#define SVM_VMGEXIT_SEV_TIO_OP_ACTION(exitinfo1)	((exitinfo1)>>32)
+#define SVM_VMGEXIT_SEV_TIO_OP_GUEST_ID(exitinfo1)	((exitinfo1) & 0xFFFFFFFF)
+#define SVM_VMGEXIT_SEV_TIO_OP_BIND	0
+#define SVM_VMGEXIT_SEV_TIO_OP_UNBIND	1
+#define SVM_VMGEXIT_SEV_TIO_OP_RUN	2
+#define SVM_VMGEXIT_SEV_TIO_OP_STOP	3
 #define SVM_VMGEXIT_HV_FEATURES			0x8000fffdull
 #define SVM_VMGEXIT_TERM_REQUEST		0x8000fffeull
 #define SVM_VMGEXIT_TERM_REASON(reason_set, reason_code)	\
@@ -245,6 +283,8 @@
 	{ SVM_VMGEXIT_GUEST_REQUEST,	"vmgexit_guest_request" }, \
 	{ SVM_VMGEXIT_EXT_GUEST_REQUEST, "vmgexit_ext_guest_request" }, \
 	{ SVM_VMGEXIT_AP_CREATION,	"vmgexit_ap_creation" }, \
+	{ SVM_VMGEXIT_SEV_TIO_GR,	"vmgexit_sev_tio_guest_request" }, \
+	{ SVM_VMGEXIT_SEV_TIO_OP,	"vmgexit_sev_tio_op" }, \
 	{ SVM_VMGEXIT_HV_FEATURES,	"vmgexit_hypervisor_feature" }, \
 	{ SVM_EXIT_ERR,         "invalid_guest_state" }
 
