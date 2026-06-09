@@ -150,11 +150,11 @@ static int r_show(struct seq_file *m, void *v)
 		start = end = 0;
 	}
 
-	seq_printf(m, "%*s%0*llx-%0*llx : %s\n",
+	seq_printf(m, "%*s%0*llx-%0*llx : %s fl=%lx desc=%lx r=%lx\n",
 			depth * 2, "",
 			width, start,
 			width, end,
-			r->name ? r->name : "<BAD>");
+			r->name ? r->name : "<BAD>", r->flags, r->desc, (ulong)r);
 	return 0;
 }
 
