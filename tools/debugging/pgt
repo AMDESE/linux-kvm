@@ -1,0 +1,50 @@
+#!/bin/bash
+
+if [ "$1" == "npt" ]; then
+	PATTERN='/sys/kernel/debug/kvm/*/vcpu0/npt'
+elif [ "$1" == "pid" ] ; then
+	# to run as: ./dump_pt -f /dev/mem -q 0x$( ./pgt pid $(pgrep pcimem) ) -l 4 -vcP | less -Ri
+	RET=$(sudo cat /proc/$2/pgt)
+	if [ "$RET" == "" ] ; then
+		echo NaN
+	else
+		echo $RET
+	fi
+	exit
+elif [ "$1" == "ua" ]; then
+	PATTERN='/sys/kernel/debug/kvm/*/vcpu0/ua'
+elif [ "$1" == "dte" ]; then
+	DOMAIN=$(echo $2 | sed -r 's/([0-9]+):[0-9a-f]+:[0-9]+\.[0-9]+/\1/g')
+	sudo find /sys -ipath "*$DOMAIN**amd-iommu/dte*" -exec cat {} \; -quit || echo NaN
+	exit
+elif [ "$1" == "pgrep" ] ; then
+	PROC=$(pgrep $2)
+	RET=$(sudo cat /proc/$PROC/pgt)
+	if [ "$RET" == "" ] ; then
+		echo NaN
+	else
+		echo $RET
+	fi
+	exit
+elif [ "$1" == "pmap" ] ; then
+	PROC=$(pgrep $2)
+	RET=$(grep $3 /proc/$PROC/maps | sed -r 's/^([^-]+)-.*$/\1/g')
+	if [ "$RET" == "" ] ; then
+		echo NaN
+	else
+		echo 0x$RET
+	fi
+	exit
+fi
+
+if [ "$2" == "1" ] ; then
+	PARAMS="-quit"
+#else
+#	set -x
+fi
+RET=$( sudo find /sys -ipath "$PATTERN" -exec cat {} \; $PARAMS 2>/dev/null )
+if [ "$RET" == "" ] ; then
+	echo NaN
+else
+	echo $RET
+fi

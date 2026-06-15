@@ -1882,6 +1882,10 @@ static void swiotlb_create_debugfs_files(struct io_tlb_mem *mem,
 	debugfs_create_file("io_tlb_transient_nslabs", 0400, mem->debugfs,
 			    mem, &fops_io_tlb_transient_used);
 #endif
+#ifdef CONFIG_DEBUG_PAGETABLES
+	debugfs_create_x64("start", 0400, mem->debugfs, &mem->defpool.start);
+	debugfs_create_x64("end", 0400, mem->debugfs, &mem->defpool.end);
+#endif
 }
 
 static int __init swiotlb_create_default_debugfs(void)

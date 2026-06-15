@@ -3,6 +3,14 @@
 # Library configuration
 #
 
+config DEBUG_PAGETABLES
+	tristate
+	depends on !STRICT_DEVMEM
+	default m
+	help
+	  Not really a module. May be one day.
+	  AMD SEV is supported here for how.
+
 config BINARY_PRINTF
 	def_bool n
 

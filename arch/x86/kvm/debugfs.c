@@ -56,6 +56,32 @@ static int vcpu_get_tsc_scaling_frac_bits(void *data, u64 *val)
 
 DEFINE_SIMPLE_ATTRIBUTE(vcpu_tsc_scaling_frac_fops, vcpu_get_tsc_scaling_frac_bits, NULL, "%llu\n");
 
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+static int vcpu_npt(void *data, u64 *val)
+{
+	struct kvm_vcpu *vcpu = data;
+	struct kvm_mmu *mmu = vcpu->arch.mmu;
+	unsigned long npt = mmu->root.hpa;
+
+	*val = npt;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(vcpu_npt_fops, vcpu_npt, NULL, "%llx\n");
+
+static int vcpu_ua(void *data, u64 *val)
+{
+	struct kvm_vcpu *vcpu = data;
+	struct kvm *kvm = vcpu->kvm;
+	pgd_t *uapt = kvm->mm->pgd;
+
+	*val = (u64) __pa(uapt);
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(vcpu_ua_fops, vcpu_ua, NULL, "%llx\n");
+#endif
+
 void kvm_arch_create_vcpu_debugfs(struct kvm_vcpu *vcpu, struct dentry *debugfs_dentry)
 {
 	debugfs_create_file("guest_mode", 0444, debugfs_dentry, vcpu,
@@ -76,6 +102,10 @@ void kvm_arch_create_vcpu_debugfs(struct kvm_vcpu *vcpu, struct dentry *debugfs_
 				    debugfs_dentry, vcpu,
 				    &vcpu_tsc_scaling_frac_fops);
 	}
+#if defined(CONFIG_DEBUG_PAGETABLES) || defined(CONFIG_DEBUG_PAGETABLES_MODULE)
+	debugfs_create_file("npt", 0444, debugfs_dentry, vcpu, &vcpu_npt_fops);
+	debugfs_create_file("ua", 0444, debugfs_dentry, vcpu, &vcpu_ua_fops);
+#endif
 }
 
 /*
