@@ -167,6 +167,7 @@ struct pci_tsm_pf0 {
 struct pci_tsm_mmio_entry {
 	struct resource res;
 	u64 tsm_offset;
+	unsigned char range_id;
 };
 
 struct pci_tsm_mmio {

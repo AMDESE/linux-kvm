@@ -753,6 +753,8 @@ struct pci_tsm_mmio *pci_tsm_mmio_alloc(struct pci_dev *pdev,
 
 		entry->res.start = range.start;
 		entry->res.end = range.end;
+		entry->res.flags = IORESOURCE_MEM;
+		entry->range_id = bar;
 		entry->tsm_offset = tsm_offset;
 		mmio->nr++;
 	}
