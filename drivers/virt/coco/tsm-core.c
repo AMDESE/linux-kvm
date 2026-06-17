@@ -51,12 +51,21 @@ static const struct attribute_group *tsm_pci_groups[] = {
 };
 
 static void tsm_release(struct device *);
+static bool tsm_class_registered;
 static const struct class tsm_class = {
 	.name		= "tsm",
 	.dev_release	= tsm_release,
 	.dev_groups	= tsm_pci_groups,
 };
 static DEFINE_IDA(tsm_ida);
+
+static int tsm_class_init(void)
+{
+	int ret = class_register(&tsm_class);
+
+	tsm_class_registered = ret == 0;
+	return ret;
+}
 
 static int match_id(struct device *dev, const void *data)
 {
@@ -82,6 +91,9 @@ static struct tsm_dev *alloc_tsm_dev(struct device *parent)
 
 	struct tsm_dev *tsm_dev __free(kfree) =
 		kzalloc_obj(*tsm_dev);
+
+	tsm_class_init();
+
 	if (!tsm_dev)
 		return ERR_PTR(-ENOMEM);
 
@@ -254,12 +266,14 @@ static void tsm_release(struct device *dev)
 
 static int __init tsm_init(void)
 {
-	return class_register(&tsm_class);
+	return tsm_class_init();
 }
 module_init(tsm_init)
 
 static void __exit tsm_exit(void)
 {
+	if (!tsm_class_registered)
+		return;
 	class_unregister(&tsm_class);
 	xa_destroy(&tsm_ide_streams);
 }
