@@ -133,7 +133,11 @@ error_exit:
 
 static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 				  void *req_buf, size_t req_sz, void *resp_buf, u32 resp_sz,
-				  u64 bdfn, struct device_evidence_object *report,
+				  u64 bdfn, enum tsm_tdisp_state *state,
+				  struct device_evidence_object *certs,
+				  struct device_evidence_object *meas,
+				  const char *nonce,
+				  struct device_evidence_object *report,
 				  u64 *fw_err)
 {
 	u64 npages = TIO_DATA_PAGES, param = 0;
@@ -145,8 +149,16 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 	if (!pt)
 		return -ENOMEM;
 
+	if (state)
+		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_STATE;
+	if (certs)
+		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_CERTS;
+	if (meas)
+		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_MEAS;
 	if (report)
 		param |= SVM_VMGEXIT_SEV_TIO_GR_INFO_REPORT;
+	if (meas && nonce)
+		memcpy(pt, nonce, SPDM_MEASUREMENTS_NONCE_LEN);
 
 	rc = handle_tio_guest_request(snp_dev, type, req_buf, req_sz, resp_buf, resp_sz,
 				      pt, &npages, &bdfn, &param, fw_err);
@@ -156,12 +168,18 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 		if (!pt)
 			return -ENOMEM;
 
+		if (meas && nonce)
+			memcpy(pt, nonce, SPDM_MEASUREMENTS_NONCE_LEN);
 		rc = handle_tio_guest_request(snp_dev, type, req_buf, req_sz, resp_buf, resp_sz,
 					      pt, &npages, &bdfn, &param, fw_err);
 	}
 	if (rc)
 		goto out_free_pt;
 
+	if (meas)
+		device_evidence_object_clear(meas);
+	if (certs)
+		device_evidence_object_clear(certs);
 	if (report)
 		device_evidence_object_clear(report);
 
@@ -177,6 +195,10 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 
 		if (guid_equal(&pt[i].guid, &TIO_GUID_REPORT) && report)
 			rc = device_evidence_object_assign(report, ptr, len);
+		else if (guid_equal(&pt[i].guid, &TIO_GUID_MEASUREMENTS) && meas)
+			rc = device_evidence_object_assign(meas, ptr, len);
+		else if (guid_equal(&pt[i].guid, &TIO_GUID_CERTIFICATES) && certs)
+			rc = device_evidence_object_assign(certs, ptr, len);
 		else
 			continue;
 		if (rc)
@@ -184,9 +206,16 @@ static int guest_request_tio_data(struct snp_guest_dev *snp_dev, u8 type,
 	}
 	sev_free_shared_pages(snp_dev->dev, pt, npages, dh);
 
+	if (state)
+		*state = param;
+
 	return 0;
 
 out_clear_blobs:
+	if (meas)
+		device_evidence_object_clear(meas);
+	if (certs)
+		device_evidence_object_clear(certs);
 	if (report)
 		device_evidence_object_clear(report);
 out_free_pt:
@@ -230,10 +259,25 @@ struct tio_msg_tdi_info_rsp {
 	u64 reserved4;
 } __packed;
 
+/* SPDM algorithms used for TDISP, used in TIO_MSG_TDI_INFO_REQ */
+#define TIO_SPDM_ALGOS_DHE_SECP256R1			0
+#define TIO_SPDM_ALGOS_DHE_SECP384R1			1
+#define TIO_SPDM_ALGOS_AEAD_AES_128_GCM			(0<<8)
+#define TIO_SPDM_ALGOS_AEAD_AES_256_GCM			(1<<8)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_RSASSA_3072		(0<<16)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P256	(1<<16)
+#define TIO_SPDM_ALGOS_ASYM_TPM_ALG_ECDSA_ECC_NIST_P384	(2<<16)
+#define TIO_SPDM_ALGOS_HASH_TPM_ALG_SHA_256		(0<<24)
+#define TIO_SPDM_ALGOS_HASH_TPM_ALG_SHA_384		(1<<24)
+#define TIO_SPDM_ALGOS_KEY_SCHED_SPDM_KEY_SCHEDULE	(0ULL<<32)
+
 static int tio_tdi_status(struct pci_dev *pdev, struct snp_guest_dev *snp_dev,
 			  struct tsm_tdi_status *ts, uint64_t tdi_id,
+			  struct device_evidence_object *certs,
+			  struct device_evidence_object *meas, const char *nonce,
 			  struct device_evidence_object *report)
 {
+	enum tsm_tdisp_state state = TDISP_STATE_CONFIG_UNLOCKED;
 	struct snp_msg_desc *mdesc = snp_dev->msg_desc;
 	size_t resp_len = sizeof(struct tio_msg_tdi_info_rsp) + mdesc->ctx->authsize;
 	struct tio_msg_tdi_info_rsp *rsp __free(kfree_sensitive) = kzalloc(resp_len, GFP_KERNEL);
@@ -249,11 +293,53 @@ static int tio_tdi_status(struct pci_dev *pdev, struct snp_guest_dev *snp_dev,
 
 	rc = guest_request_tio_data(snp_dev, TIO_MSG_TDI_INFO_REQ, &req,
 				    sizeof(req), rsp, resp_len,
-				    ghcb_tio_sbdfn(pdev), report, &fw_err);
+				    ghcb_tio_sbdfn(pdev), &state,
+				    certs, meas, nonce,
+				    report, &fw_err);
 	if (rc)
 		return rc;
 
+	ts->meas_digest_valid = rsp->meas_digest_valid;
+	ts->meas_digest_fresh = rsp->meas_digest_fresh;
+	ts->no_fw_update = rsp->no_fw_update;
+	ts->cache_line_size = rsp->cache_line_size == 0 ? 64 : 128;
+	ts->lock_msix = rsp->lock_msix;
+	ts->bind_p2p = rsp->bind_p2p;
+	ts->all_request_redirect = rsp->all_request_redirect;
+#define __ALGO(x, n, y) \
+	((((x) & (0xFFUL << (n))) == TIO_SPDM_ALGOS_##y) ? \
+	 (1ULL << TSM_SPDM_ALGOS_##y) : 0)
+	ts->spdm_algos =
+		__ALGO(rsp->spdm_algos, 0, DHE_SECP256R1) |
+		__ALGO(rsp->spdm_algos, 0, DHE_SECP384R1) |
+		__ALGO(rsp->spdm_algos, 8, AEAD_AES_128_GCM) |
+		__ALGO(rsp->spdm_algos, 8, AEAD_AES_256_GCM) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_RSASSA_3072) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P256) |
+		__ALGO(rsp->spdm_algos, 16, ASYM_TPM_ALG_ECDSA_ECC_NIST_P384) |
+		__ALGO(rsp->spdm_algos, 24, HASH_TPM_ALG_SHA_256) |
+		__ALGO(rsp->spdm_algos, 24, HASH_TPM_ALG_SHA_384) |
+		__ALGO(rsp->spdm_algos, 32, KEY_SCHED_SPDM_KEY_SCHEDULE);
+#undef __ALGO
+	memcpy(ts->certs_digest, rsp->certs_digest, sizeof(ts->certs_digest));
+	memcpy(ts->meas_digest, rsp->meas_digest, sizeof(ts->meas_digest));
+	memcpy(ts->interface_report_digest, rsp->interface_report_digest,
+	       sizeof(ts->interface_report_digest));
+	ts->intf_report_counter = rsp->tdi_report_count;
 	ts->tdi_id = rsp->tdi_id;
+
+	switch (rsp->status) {
+	case TIO_MSG_TDI_INFO_RSP_STATUS_BOUND:
+		ts->status = TDISP_STATE_BOUND;
+		break;
+	case TIO_MSG_TDI_INFO_RSP_STATUS_UNBOUND:
+		ts->status = TDISP_STATE_UNBOUND;
+		break;
+	default:
+		ts->status = TDISP_STATE_INVALID;
+		break;
+	}
+	ts->state = state;
 
 	return 0;
 }
@@ -574,6 +660,14 @@ static int tio_tdi_sdte_write(struct pci_dev *pdev, struct snp_guest_dev *snp_de
 	return 0;
 }
 
+static int sev_guest_status(struct pci_dev *pdev, struct tsm_tdi_status *ts)
+{
+	struct tio_guest_tdi *gtdi = pdev_to_tdi(pdev);
+
+	return tio_tdi_status(pdev, gtdi->snp_dev, ts, gtdi->tdi_id,
+			      NULL, NULL, NULL, NULL);
+}
+
 static struct pci_tsm *sev_guest_lock(struct tsm_dev *tsmdev, struct pci_dev *pdev)
 {
 	struct tio_guest_tdi *gtdi __free(kfree) = kzalloc(sizeof(*gtdi), GFP_KERNEL);
@@ -608,6 +702,8 @@ static struct pci_tsm *sev_guest_lock(struct tsm_dev *tsmdev, struct pci_dev *pd
 		return ERR_PTR(-ENOMEM);
 
 	rc = tio_tdi_status(pdev, gtdi->snp_dev, &ts, tdi_id,
+			    &ev->obj[DEVICE_EVIDENCE_TYPE_CERT0],
+			    NULL, NULL,
 			    &ev->obj[DEVICE_EVIDENCE_TYPE_REPORT]);
 	if (rc)
 		return ERR_PTR(rc);
@@ -677,6 +773,41 @@ stop_tdi:
 	return ret;
 }
 
+static int sev_guest_refresh_evidence(struct pci_tsm *tsm, const void *nonce,
+				      size_t nonce_len)
+{
+	struct pci_dev *pdev = tsm->pdev;
+	struct tio_guest_tdi *gtdi = pdev_to_tdi(pdev);
+	struct snp_guest_dev *snp_dev = gtdi->snp_dev;
+	struct snp_msg_desc *mdesc = snp_dev->msg_desc;
+	size_t resp_len = sizeof(struct tio_msg_tdi_info_rsp) + mdesc->ctx->authsize;
+	struct tio_msg_tdi_info_rsp *rsp __free(kfree_sensitive) = kzalloc(resp_len, GFP_KERNEL);
+	struct tio_msg_tdi_info_req req = {
+		.tdi_id = gtdi->tdi_id,
+	};
+	u64 fw_err = 0;
+	char nonce_buf[SPDM_MEASUREMENTS_NONCE_LEN] = {};
+
+	if (!rsp)
+		return -ENOMEM;
+
+	if (nonce_len) {
+		memset(nonce_buf, 0, sizeof(nonce_buf));
+		memcpy(nonce_buf, nonce,
+		       min(nonce_len, SPDM_MEASUREMENTS_NONCE_LEN));
+	}
+
+	pci_notice(pdev, "TDI measurements");
+
+	struct device_evidence *ev = pdev->tsm->evidence;
+
+	return guest_request_tio_data(snp_dev, TIO_MSG_TDI_INFO_REQ,
+				      &req, sizeof(req), rsp, resp_len,
+				      ghcb_tio_sbdfn(pdev), NULL, NULL,
+				      &ev->obj[DEVICE_EVIDENCE_TYPE_MEASUREMENTS],
+				      nonce_buf, NULL, &fw_err);
+}
+
 static int sev_guest_enable_dma(struct pci_dev *pdev)
 {
 	struct tio_guest_tdi *gtdi = pdev_to_tdi(pdev);
@@ -705,6 +836,8 @@ struct pci_tsm_ops sev_guest_tsm_ops = {
 	.run = sev_guest_accept,
 	.enable_dma = sev_guest_enable_dma,
 	.disable_dma = sev_guest_disable_dma,
+	.tdi_status = sev_guest_status,
+	.refresh_evidence = sev_guest_refresh_evidence,
 };
 
 void sev_guest_tsm_set_ops(bool set, struct snp_guest_dev *snp_dev)
