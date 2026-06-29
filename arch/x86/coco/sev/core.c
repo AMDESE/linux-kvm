@@ -1381,11 +1381,6 @@ e_restore_irq:
 	return ret;
 }
 
-static struct platform_device sev_guest_device = {
-	.name		= "sev-guest",
-	.id		= -1,
-};
-
 static struct platform_device tpm_svsm_device = {
 	.name		= "tpm-svsm",
 	.id		= -1,
@@ -1393,10 +1388,17 @@ static struct platform_device tpm_svsm_device = {
 
 static int __init snp_init_platform_device(void)
 {
+	struct platform_device *dev;
+
 	if (!cc_platform_has(CC_ATTR_GUEST_SEV_SNP))
 		return -ENODEV;
 
-	if (platform_device_register(&sev_guest_device))
+	dev = platform_device_register_data(NULL, "sev-guest", -1,
+					    &sev_hv_features,
+					    sizeof(sev_hv_features));
+	if (IS_ERR(dev))
+		return PTR_ERR(dev);
+	if (!dev)
 		return -ENODEV;
 
 	if (snp_svsm_vtpm_probe() &&
