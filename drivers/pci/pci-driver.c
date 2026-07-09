@@ -1715,6 +1715,9 @@ static void pci_dma_cleanup(struct device *dev)
 
 	if (!driver->driver_managed_dma)
 		iommu_device_unuse_default_domain(dev);
+
+	if (device_tcb_trusted(dev))
+		pci_tsm_disable_dma(to_pci_dev(dev));
 }
 
 /*
