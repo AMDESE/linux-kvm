@@ -28,9 +28,20 @@ bool device_tcb_trusted(struct device *dev)
 	return dev->p->trust >= DEVICE_TRUST_TCB;
 }
 
-/* Driver trust policy requires modules, builtin drivers always attach */
-static enum device_trust builtin_driver_trust(void)
+static char trusted_builtins[256];
+
+static int __init trust_param(char *str)
 {
+	strcpy(trusted_builtins, str);
+	return 0;
+}
+early_param("trust", trust_param);
+
+/* Driver trust policy requires modules, builtin drivers always attach */
+static enum device_trust builtin_driver_trust(const char *drvname)
+{
+	if (strstr(trusted_builtins, drvname))
+		return DEVICE_TRUST_TCB;
 	if (IS_ENABLED(CONFIG_BUILTIN_DEVICE_TRUST_ADVERSARY))
 		return DEVICE_TRUST_ADVERSARY;
 	else if (IS_ENABLED(CONFIG_BUILTIN_DEVICE_TRUST_TCB))
@@ -38,10 +49,10 @@ static enum device_trust builtin_driver_trust(void)
 	return DEVICE_TRUST_AUTO;
 }
 
-static enum device_trust driver_trust(struct module *mod)
+static enum device_trust driver_trust(struct module *mod, const char *drvname)
 {
 	if (!mod)
-		return builtin_driver_trust();
+		return builtin_driver_trust(drvname);
 	return mod->trust;
 }
 
@@ -55,7 +66,7 @@ static enum device_trust driver_trust(struct module *mod)
  */
 bool device_trust_bind(const struct device_driver *drv, struct device *dev)
 {
-	enum device_trust drv_trust = driver_trust(drv->owner);
+	enum device_trust drv_trust = driver_trust(drv->owner, drv->name);
 
 	if (drv_trust != DEVICE_TRUST_UNSET) {
 		dev->p->trust = drv_trust;
