@@ -689,7 +689,7 @@ struct pci_tsm_mmio *pci_tsm_mmio_alloc(struct pci_dev *pdev,
 		const struct pci_tsm_devif_mmio *mmio_data = &report->mmio[i];
 		struct pci_tsm_mmio_entry *entry =
 			pci_tsm_mmio_entry(mmio, mmio->nr);
-		u64 tsm_offset = __le64_to_cpu(mmio_data->phys);
+		u64 tsm_offset = __le64_to_cpu(mmio_data->phys) * SZ_4K;
 		u64 size = __le32_to_cpu(mmio_data->nr_pfns) * SZ_4K;
 		u32 attr = __le32_to_cpu(mmio_data->attributes);
 		int bar = FIELD_GET(PCI_TSM_DEVIF_REPORT_MMIO_ATTR_RANGE_ID,
