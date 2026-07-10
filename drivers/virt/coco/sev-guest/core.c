@@ -24,6 +24,7 @@
 #include <linux/uuid.h>
 #include <linux/configfs.h>
 #include <linux/mm.h>
+#include <linux/dma-mapping.h>
 #include <uapi/linux/sev-guest.h>
 #include <uapi/linux/psp-sev.h>
 
@@ -678,7 +679,7 @@ static int __init sev_guest_probe(struct platform_device *pdev)
 	if (!sev_hv_features_ptr || !(*sev_hv_features_ptr & GHCB_HV_FT_SNP_SEV_TIO))
 		tsm_enable = false;
 
-	if (tsm_enable)
+	if (tsm_enable && !dma_set_mask(&pdev->dev, DMA_BIT_MASK(32)))
 		sev_guest_tsm_set_ops(true, snp_dev);
 
 	return 0;
